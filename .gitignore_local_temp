@@ -1,0 +1,41 @@
+# Dependências do Node/Expo
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn.lock
+
+# Builds e distribuição web
+.dist/
+dist/
+build/
+out/
+release/
+web-build/
+*.log
+*.zip
+
+# Expo / React Native artefatos
+.expo/
+.expo-shared/
+web-report/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Ferramentas diversas
+.idea/
+.vscode/
+target/
+TEST*.xml
+*.app
+*.exe
+*.dmg
+*.jar
+*.war
+*.mp4
+*.tiff
+*.avi
+*.flv
+*.mov
+*.wmv

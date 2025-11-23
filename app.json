@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Task Organizer",
+    "slug": "task-organizer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "taskorganizer",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#101828"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#101828"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
