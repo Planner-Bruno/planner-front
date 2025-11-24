@@ -1,6 +1,12 @@
 export type TaskStatus = 'backlog' | 'in_progress' | 'done';
 export type TaskPriority = 'low' | 'medium' | 'high';
 
+export interface TaskSubtask {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -14,6 +20,7 @@ export interface Task {
   dueDate?: string;
   tags?: string[];
   goalId?: string;
+  subtasks?: TaskSubtask[];
   createdAt: string;
   updatedAt: string;
 }
@@ -36,4 +43,5 @@ export type EditableTaskFields = Partial<Omit<Task, 'id' | 'createdAt' | 'update
   startDate?: string | null;
   dueDate?: string | null;
   goalId?: string | null;
+  subtasks?: TaskSubtask[] | null;
 };

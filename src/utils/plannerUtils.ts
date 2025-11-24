@@ -10,6 +10,7 @@ import type {
   ScheduleEventKind
 } from '@/types/planner';
 import type { Task } from '@/types/task';
+import { normalizeDateInput } from '@/utils/dateUtils';
 import { demoTasks } from './taskUtils';
 
 const makeId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 7)}`;
@@ -51,8 +52,8 @@ export const createGoal = (input: {
   categoryId: input.categoryId,
   categoryColor: input.categoryColor,
   color: input.color,
-  startDate: input.startDate ? new Date(input.startDate).toISOString() : undefined,
-  dueDate: input.dueDate ? new Date(input.dueDate).toISOString() : undefined,
+  startDate: normalizeDateInput(input.startDate) ?? undefined,
+  dueDate: normalizeDateInput(input.dueDate) ?? undefined,
   tags: sanitizeTags(input.tags),
   progress: 0,
   milestones: [],
@@ -84,7 +85,7 @@ export const createScheduleEvent = (input: {
   kind: input.kind ?? 'event',
   title: input.title.trim(),
   description: input.description?.trim(),
-  date: new Date(input.date).toISOString(),
+  date: normalizeDateInput(input.date) ?? new Date().toISOString(),
   start: input.start,
   end: input.end,
   color: input.color,
@@ -95,7 +96,7 @@ export const createScheduleEvent = (input: {
 
 export const createCalendarMark = (input: { date: string; label: string; color: string }): CalendarMark => ({
   id: makeId('mark'),
-  date: new Date(input.date).toISOString(),
+  date: normalizeDateInput(input.date) ?? new Date().toISOString(),
   label: input.label.trim(),
   color: input.color
 });

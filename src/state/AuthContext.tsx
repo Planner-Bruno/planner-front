@@ -62,8 +62,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(data.user);
       await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: data.token, user: data.user }));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Erro inesperado');
-      throw requestError;
+      const normalizedError = (() => {
+        if (requestError instanceof TypeError && requestError.message === 'Network request failed') {
+          return new Error(`Não foi possível acessar ${API_BASE_URL}. Verifique se o backend está disponível para o seu dispositivo e se o IP está correto.`);
+        }
+        if (requestError instanceof Error) {
+          return requestError;
+        }
+        return new Error('Erro inesperado ao comunicar com o servidor');
+      })();
+      setError(normalizedError.message);
+      throw normalizedError;
     } finally {
       setLoading(false);
     }

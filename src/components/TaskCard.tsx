@@ -1,7 +1,7 @@
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { memo } from 'react';
-import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { memo, useEffect, useState } from 'react';
+import { Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
 import type { Task } from '@/types/task';
 import { isOverdue } from '@/utils/taskUtils';
 import type { Palette } from '@/theme/colors';
@@ -16,6 +16,9 @@ interface Props {
   onEdit?(): void;
   onDelete?(): void;
   onPress?(): void;
+  onToggleSubtask?(subtaskId: string): void;
+  onAddSubtask?(title: string): void;
+  onRemoveSubtask?(subtaskId: string): void;
   style?: StyleProp<ViewStyle>;
   goalMeta?: {
     title: string;
@@ -29,12 +32,41 @@ const statusLabel: Record<Task['status'], string> = {
   done: 'Concluída'
 };
 
-const TaskCardComponent = ({ task, onToggle, onAdvance, onEdit, onDelete, onPress, goalMeta, style }: Props) => {
+const TaskCardComponent = ({
+  task,
+  onToggle,
+  onAdvance,
+  onEdit,
+  onDelete,
+  onPress,
+  goalMeta,
+  style,
+  onToggleSubtask,
+  onAddSubtask,
+  onRemoveSubtask
+}: Props) => {
   const colors = useColors();
   const styles = useThemedStyles(createStyles);
   const overdue = isOverdue(task);
   const startLabel = task.startDate ? format(new Date(task.startDate), "dd MMM", { locale: ptBR }) : null;
   const dueLabel = task.dueDate ? format(new Date(task.dueDate), "dd MMM", { locale: ptBR }) : null;
+  const [subtaskDraft, setSubtaskDraft] = useState('');
+  const totalSubtasks = task.subtasks?.length ?? 0;
+  const hasSubtasks = Boolean(totalSubtasks);
+  const completedSubtasks = task.subtasks?.filter((subtask) => subtask.completed).length ?? 0;
+  const progressPercent = totalSubtasks ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0;
+  const canAddSubtask = Boolean(subtaskDraft.trim());
+
+  useEffect(() => {
+    setSubtaskDraft('');
+  }, [task.id]);
+
+  const handleAddSubtask = () => {
+    if (!onAddSubtask || !canAddSubtask) return;
+    onAddSubtask(subtaskDraft.trim());
+    setSubtaskDraft('');
+  };
+
   return (
     <Pressable style={({ pressed }) => [styles.card, style, pressed && styles.pressed]} onPress={onPress}>
       <View style={styles.header}>
@@ -60,6 +92,18 @@ const TaskCardComponent = ({ task, onToggle, onAdvance, onEdit, onDelete, onPres
           ) : null}
         </View>
       </View>
+
+      {hasSubtasks ? (
+        <View style={styles.progressSection}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressLabel}>Progresso das subtarefas</Text>
+            <Text style={styles.progressValue}>{progressPercent}%</Text>
+          </View>
+          <View style={styles.progressBar}>
+            <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.metaRow}>
         <View style={styles.metaPill}>
@@ -99,6 +143,56 @@ const TaskCardComponent = ({ task, onToggle, onAdvance, onEdit, onDelete, onPres
               <Text style={styles.tagLabel}>#{tag}</Text>
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {(hasSubtasks || onAddSubtask) ? (
+        <View style={styles.subtaskSection}>
+          {hasSubtasks ? (
+            <View style={styles.subtaskList}>
+              {task.subtasks.map((subtask) => (
+                <View key={subtask.id} style={styles.subtaskItem}>
+                  <Pressable
+                    style={[styles.subtaskCheckbox, subtask.completed && styles.subtaskCheckboxChecked]}
+                    onPress={() => onToggleSubtask?.(subtask.id)}
+                  >
+                    {subtask.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
+                  </Pressable>
+                  <Text style={[styles.subtaskLabel, subtask.completed && styles.subtaskCompleted]} numberOfLines={2}>
+                    {subtask.title}
+                  </Text>
+                  {onRemoveSubtask ? (
+                    <Pressable style={styles.subtaskRemove} onPress={() => onRemoveSubtask(subtask.id)}>
+                      <Text style={styles.subtaskRemoveLabel}>×</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.helperText}>Nenhuma subtarefa cadastrada ainda.</Text>
+          )}
+
+          {onAddSubtask ? (
+            <View style={styles.subtaskInputRow}>
+              <TextInput
+                style={styles.subtaskInput}
+                placeholder="Adicionar subtarefa"
+                placeholderTextColor={colors.textMuted}
+                value={subtaskDraft}
+                onChangeText={setSubtaskDraft}
+                onSubmitEditing={handleAddSubtask}
+                returnKeyType="done"
+              />
+              <Pressable
+                style={[styles.subtaskAddButton, !canAddSubtask && styles.subtaskAddButtonDisabled]}
+                onPress={handleAddSubtask}
+                disabled={!canAddSubtask}
+              >
+                <Text style={styles.subtaskAddLabel}>Adicionar</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
 
@@ -274,6 +368,120 @@ const createStyles = (colors: Palette) =>
       color: colors.text,
       fontSize: 11,
       fontWeight: '600'
+    },
+    progressSection: {
+      gap: 6
+    },
+    progressHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    },
+    progressLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    progressValue: {
+      color: colors.text,
+      fontWeight: '700'
+    },
+    progressBar: {
+      width: '100%',
+      height: 6,
+      borderRadius: 999,
+      backgroundColor: colors.mutedSurface,
+      overflow: 'hidden'
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: colors.primary
+    },
+    subtaskSection: {
+      gap: 8
+    },
+    subtaskList: {
+      gap: 8
+    },
+    subtaskItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    subtaskCheckbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    subtaskCheckboxChecked: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primary
+    },
+    subtaskCheckboxIndicator: {
+      width: 10,
+      height: 10,
+      borderRadius: 3,
+      backgroundColor: colors.background
+    },
+    subtaskLabel: {
+      flex: 1,
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '600'
+    },
+    subtaskCompleted: {
+      color: colors.textMuted,
+      textDecorationLine: 'line-through'
+    },
+    subtaskRemove: {
+      paddingHorizontal: 4,
+      paddingVertical: 2
+    },
+    subtaskRemoveLabel: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '700'
+    },
+    helperText: {
+      color: colors.textMuted,
+      fontSize: 12
+    },
+    subtaskInputRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center'
+    },
+    subtaskInput: {
+      flex: 1,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      color: colors.text
+    },
+    subtaskAddButton: {
+      borderRadius: 12,
+      backgroundColor: colors.primary,
+      paddingHorizontal: 14,
+      paddingVertical: 10
+    },
+    subtaskAddButtonDisabled: {
+      opacity: 0.6
+    },
+    subtaskAddLabel: {
+      color: colors.background,
+      fontWeight: '700'
     },
     actions: {
       flexDirection: 'row',

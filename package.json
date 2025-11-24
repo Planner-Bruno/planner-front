@@ -8,7 +8,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "web:lan": "expo start --web --host lan",
     "web:build": "expo export --platform web --output-dir dist",
+    "web:preview": "npm run web:build && npx serve dist --listen 0.0.0.0:4173",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run"
   },
@@ -37,6 +39,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-native": "^5.0.0",
+    "serve": "^14.2.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.47.0",
     "vitest": "^4.0.10"

@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput,
 import { useColors } from '@/theme/ThemeProvider';
 import type { Palette } from '@/theme/colors';
 import { useAuth } from '@/state/AuthContext';
+import { API_BASE_URL } from '@/config/api';
 
 type AuthMode = 'login' | 'register';
 
@@ -100,6 +101,7 @@ export const LoginScreen = () => {
           </Text>
         </Pressable>
       </View>
+      <Text style={styles.connectionHint}>API: {API_BASE_URL}</Text>
     </KeyboardAvoidingView>
   );
 };
@@ -171,5 +173,10 @@ const createStyles = (colors: Palette) =>
       textAlign: 'center',
       color: colors.accent,
       fontWeight: '600'
+    },
+    connectionHint: {
+      marginTop: 16,
+      color: colors.textMuted,
+      fontSize: 12
     }
   });

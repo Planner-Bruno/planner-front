@@ -6,7 +6,7 @@ import * as Sharing from 'expo-sharing';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { CalendarMark, Goal, PlannerNote, ScheduleEvent, ScheduleEventKind } from '@/types/planner';
-import type { Task } from '@/types/task';
+import type { Task, TaskSubtask } from '@/types/task';
 import { CalendarPanel } from '@/components/CalendarPanel';
 import { DashboardPanel } from '@/components/DashboardPanel';
 import { EmptyState } from '@/components/EmptyState';
@@ -29,6 +29,8 @@ import type { Palette } from '@/theme/colors';
 import { useColors, useThemeMode } from '@/theme/ThemeProvider';
 import type { PlannerSnapshot } from '@/storage/plannerStorage';
 import { extractDayKey } from '@/utils/plannerUtils';
+import { normalizeDateInput } from '@/utils/dateUtils';
+import { makeSubtask } from '@/utils/taskUtils';
 
 const readSnapshotFile = async (asset: DocumentPicker.DocumentPickerAsset): Promise<string> => {
   if (Platform.OS === 'web') {
@@ -84,6 +86,7 @@ type TaskFormPayload = {
   dueDate?: string | null;
   tags?: string[];
   goalId?: string | null;
+  subtasks?: TaskSubtask[] | null;
 };
 
 type EventFormPayload = {
@@ -353,7 +356,8 @@ export const HomeScreen = () => {
         startDate: payload.startDate ?? null,
         dueDate: payload.dueDate ?? null,
         tags: payload.tags,
-        goalId: payload.goalId ?? null
+        goalId: payload.goalId ?? null,
+        subtasks: payload.subtasks ?? null
       });
       setEditingTask(null);
     } else {
@@ -367,7 +371,8 @@ export const HomeScreen = () => {
         startDate: payload.startDate ?? null,
         dueDate: payload.dueDate ?? null,
         tags: payload.tags ?? [],
-        goalId: payload.goalId ?? null
+        goalId: payload.goalId ?? null,
+        subtasks: payload.subtasks ?? null
       });
     }
   };
@@ -383,8 +388,34 @@ export const HomeScreen = () => {
     }
   };
 
+  const handleToggleSubtask = (taskId: Task['id'], subtaskId: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task?.subtasks) return;
+    const subtasks = task.subtasks.map((subtask) =>
+      subtask.id === subtaskId ? { ...subtask, completed: !subtask.completed } : subtask
+    );
+    updateTask(taskId, { subtasks });
+  };
+
+  const handleAddSubtask = (taskId: Task['id'], title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const task = tasks.find((item) => item.id === taskId);
+    const next = [...(task?.subtasks ?? []), makeSubtask(trimmed)];
+    updateTask(taskId, { subtasks: next });
+  };
+
+  const handleRemoveSubtask = (taskId: Task['id'], subtaskId: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task?.subtasks) return;
+    const remaining = task.subtasks.filter((subtask) => subtask.id !== subtaskId);
+    updateTask(taskId, { subtasks: remaining.length ? remaining : null });
+  };
+
   const handleGoalSubmit = (payload: GoalFormPayload, editingId?: Goal['id']) => {
     const categoryName = payload.categoryName || 'Sem categoria';
+    const normalizedStartDate = normalizeDateInput(payload.startDate) ?? undefined;
+    const normalizedDueDate = normalizeDateInput(payload.dueDate) ?? undefined;
     if (editingId) {
       const goal = goals.find((item) => item.id === editingId);
       if (!goal) return;
@@ -396,8 +427,8 @@ export const HomeScreen = () => {
         categoryId: payload.categoryId ?? undefined,
         categoryColor: payload.categoryColor ?? undefined,
         color: payload.color,
-        startDate: payload.startDate ? new Date(payload.startDate).toISOString() : undefined,
-        dueDate: payload.dueDate ? new Date(payload.dueDate).toISOString() : undefined,
+        startDate: normalizedStartDate,
+        dueDate: normalizedDueDate,
         tags: payload.tags && payload.tags.length ? payload.tags : undefined
       });
       setEditingGoal(null);
@@ -409,8 +440,8 @@ export const HomeScreen = () => {
         categoryId: payload.categoryId ?? undefined,
         categoryColor: payload.categoryColor ?? undefined,
         color: payload.color,
-        startDate: payload.startDate,
-        dueDate: payload.dueDate,
+        startDate: normalizedStartDate,
+        dueDate: normalizedDueDate,
         tags: payload.tags
       });
     }
@@ -536,6 +567,9 @@ export const HomeScreen = () => {
                       onAdvance={() => advanceTask(task.id)}
                       onEdit={() => openTaskEditor(task)}
                       onDelete={() => requestDeleteTask(task)}
+                      onToggleSubtask={(subtaskId) => handleToggleSubtask(task.id, subtaskId)}
+                      onAddSubtask={(title) => handleAddSubtask(task.id, title)}
+                      onRemoveSubtask={(subtaskId) => handleRemoveSubtask(task.id, subtaskId)}
                       goalMeta={relatedGoal ? { title: relatedGoal.title, color: relatedGoal.color } : undefined}
                     />
                   );

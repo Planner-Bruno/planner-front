@@ -1,5 +1,5 @@
 import { addDays, endOfDay, isAfter, isBefore, isWithinInterval, parseISO, startOfDay } from 'date-fns';
-import type { EditableTaskFields, Task, TaskFilter, TaskInsights, TaskPriority } from '@/types/task';
+import type { EditableTaskFields, Task, TaskFilter, TaskInsights, TaskPriority, TaskSubtask } from '@/types/task';
 
 const randomSegment = () => Math.random().toString(36).slice(2, 7);
 
@@ -8,6 +8,28 @@ const normalizeTags = (tags?: string[] | null): string[] | undefined => {
   const cleaned = tags.map((tag) => tag.trim()).filter(Boolean).map((tag) => tag.slice(0, 32));
   return cleaned.length ? cleaned : undefined;
 };
+
+const sanitizeSubtasks = (entries?: TaskSubtask[] | null): TaskSubtask[] | undefined => {
+  if (!entries?.length) return undefined;
+  const normalized = entries
+    .map((entry) => {
+      const title = entry.title?.trim() ?? '';
+      if (!title) return null;
+      return {
+        id: entry.id ?? `${Date.now().toString(36)}-${randomSegment()}`,
+        title,
+        completed: Boolean(entry.completed)
+      } satisfies TaskSubtask;
+    })
+    .filter(Boolean) as TaskSubtask[];
+  return normalized.length ? normalized : undefined;
+};
+
+export const makeSubtask = (title: string): TaskSubtask => ({
+  id: `${Date.now().toString(36)}-${randomSegment()}`,
+  title: title.trim(),
+  completed: false
+});
 
 export const createTask = (input: {
   title: string;
@@ -20,8 +42,10 @@ export const createTask = (input: {
   dueDate?: string | null;
   tags?: string[] | null;
   goalId?: string | null;
+  subtasks?: TaskSubtask[] | null;
 }): Task => {
   const now = new Date().toISOString();
+  const subtasks = sanitizeSubtasks(input.subtasks);
   return {
     id: `${Date.now().toString(36)}-${randomSegment()}`,
     title: input.title.trim(),
@@ -35,6 +59,7 @@ export const createTask = (input: {
     dueDate: input.dueDate ?? undefined,
     tags: normalizeTags(input.tags),
     goalId: input.goalId ?? undefined,
+    subtasks,
     createdAt: now,
     updatedAt: now
   };
@@ -50,6 +75,7 @@ export const updateTaskFields = (task: Task, patch: EditableTaskFields): Task =>
   dueDate: patch.dueDate === null ? undefined : patch.dueDate ?? task.dueDate,
   tags: patch.tags === undefined ? task.tags : normalizeTags(patch.tags),
   goalId: patch.goalId === null ? undefined : patch.goalId ?? task.goalId,
+  subtasks: patch.subtasks === null ? undefined : sanitizeSubtasks(patch.subtasks) ?? task.subtasks,
   updatedAt: new Date().toISOString()
 });
 
@@ -151,6 +177,11 @@ export const demoTasks: Task[] = [
     dueDate: addDays(new Date(), 1).toISOString(),
     tags: ['planejamento', 'lancamento'],
     goalId: 'goal-focus',
+    subtasks: [
+      { ...makeSubtask('Revisar backlog'), completed: true },
+      makeSubtask('Listar riscos'),
+      makeSubtask('Enviar plano ao time')
+    ],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },

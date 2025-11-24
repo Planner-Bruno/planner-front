@@ -5,6 +5,7 @@ import type { Palette } from '@/theme/colors';
 import { useColors } from '@/theme/ThemeProvider';
 import { useThemedStyles } from '@/theme/useThemedStyles';
 import { DateField } from '@/components/DateField';
+import { normalizeDateInput } from '@/utils/dateUtils';
 
 interface EventPayload {
   kind: ScheduleEventKind;
@@ -74,10 +75,12 @@ export const EventComposer = ({ visible, onClose, onSubmit, defaultKind, default
 
   const handleSave = () => {
     if (!form.title.trim()) return;
+    const normalizedDate = normalizeDateInput(form.date);
+    if (!normalizedDate) return;
     onSubmit(
       {
         ...form,
-        date: new Date(form.date).toISOString()
+        date: normalizedDate
       },
       initialEvent?.id
     );

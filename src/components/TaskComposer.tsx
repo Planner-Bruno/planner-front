@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Goal, PlannerCategory } from '@/types/planner';
-import type { Task, TaskPriority } from '@/types/task';
+import type { Task, TaskPriority, TaskSubtask } from '@/types/task';
 import type { Palette } from '@/theme/colors';
 import { priorityColors } from '@/theme/colors';
 import { useColors } from '@/theme/ThemeProvider';
 import { useThemedStyles } from '@/theme/useThemedStyles';
 import { DateField } from '@/components/DateField';
 import { CategorySelector } from '@/components/CategorySelector';
+import { makeSubtask } from '@/utils/taskUtils';
+import { normalizeDateInput } from '@/utils/dateUtils';
 
 interface TaskComposerPayload {
   title: string;
@@ -20,6 +22,7 @@ interface TaskComposerPayload {
   dueDate?: string | null;
   tags?: string[];
   goalId?: string | null;
+  subtasks?: TaskSubtask[] | null;
 }
 
 interface ComposerProps {
@@ -45,6 +48,7 @@ type FormState = {
   dueDate: string;
   goalId: string | null;
   tagsInput: string;
+  subtasks: TaskSubtask[];
 };
 
 const buildDefaultForm = (category?: PlannerCategory): FormState => ({
@@ -57,7 +61,8 @@ const buildDefaultForm = (category?: PlannerCategory): FormState => ({
   startDate: '',
   dueDate: '',
   goalId: null,
-  tagsInput: ''
+  tagsInput: '',
+  subtasks: []
 });
 
 export const TaskComposer = ({
@@ -75,6 +80,7 @@ export const TaskComposer = ({
   const styles = useThemedStyles(createStyles);
   const defaultCategoryRef = useRef<PlannerCategory | undefined>(categories[0]);
   const [form, setForm] = useState<FormState>(() => buildDefaultForm(defaultCategoryRef.current));
+  const [subtaskDraft, setSubtaskDraft] = useState('');
   const isEditing = Boolean(initialTask);
   const selectedCategory = categories.find((category) => category.id === form.categoryId);
 
@@ -85,6 +91,7 @@ export const TaskComposer = ({
   useEffect(() => {
     if (!visible) {
       setForm(buildDefaultForm(defaultCategoryRef.current));
+      setSubtaskDraft('');
       return;
     }
 
@@ -103,13 +110,20 @@ export const TaskComposer = ({
         startDate: initialTask.startDate ? initialTask.startDate.slice(0, 10) : '',
         dueDate: initialTask.dueDate ? initialTask.dueDate.slice(0, 10) : '',
         goalId: initialTask.goalId ?? null,
-        tagsInput: initialTask.tags?.join(', ') ?? ''
+        tagsInput: initialTask.tags?.join(', ') ?? '',
+        subtasks: initialTask.subtasks ?? []
       });
       return;
     }
 
     setForm(buildDefaultForm(defaultCategoryRef.current));
   }, [visible, initialTask]);
+
+  useEffect(() => {
+    if (!visible) {
+      setSubtaskDraft('');
+    }
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || isEditing || form.categoryId || !categories.length) return;
@@ -123,10 +137,8 @@ export const TaskComposer = ({
 
   const handleConfirm = () => {
     if (!form.title.trim()) return;
-    const parsedDue = form.dueDate ? new Date(form.dueDate) : null;
-    const dueDate = parsedDue && !Number.isNaN(parsedDue.getTime()) ? parsedDue.toISOString() : null;
-    const parsedStart = form.startDate ? new Date(form.startDate) : null;
-    const startDate = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart.toISOString() : null;
+    const startDate = normalizeDateInput(form.startDate);
+    const dueDate = normalizeDateInput(form.dueDate);
     const activeCategory = selectedCategory || (form.categoryName ? { name: form.categoryName, color: form.categoryColor } : undefined);
     const categoryName = (activeCategory?.name ?? form.categoryName) || 'Sem categoria';
     const categoryColor = form.categoryColor ?? activeCategory?.color ?? null;
@@ -134,6 +146,9 @@ export const TaskComposer = ({
       .split(',')
       .map((tag) => tag.trim())
       .filter(Boolean);
+    const subtasks = form.subtasks
+      .map((subtask) => ({ ...subtask, title: subtask.title.trim() }))
+      .filter((subtask) => subtask.title.length);
     const payload: TaskComposerPayload = {
       title: form.title,
       description: form.description,
@@ -144,10 +159,44 @@ export const TaskComposer = ({
       startDate,
       dueDate,
       tags: tags.length ? tags : [],
-      goalId: form.goalId
+      goalId: form.goalId,
+      subtasks: subtasks.length ? subtasks : null
     };
     onSubmit(payload, initialTask?.id);
     onClose();
+  };
+
+  const handleAddSubtask = () => {
+    const trimmed = subtaskDraft.trim();
+    if (!trimmed) return;
+    setForm((prev) => ({
+      ...prev,
+      subtasks: [...prev.subtasks, makeSubtask(trimmed)]
+    }));
+    setSubtaskDraft('');
+  };
+
+  const handleUpdateSubtask = (id: string, title: string) => {
+    setForm((prev) => ({
+      ...prev,
+      subtasks: prev.subtasks.map((subtask) => (subtask.id === id ? { ...subtask, title } : subtask))
+    }));
+  };
+
+  const handleRemoveSubtask = (id: string) => {
+    setForm((prev) => ({
+      ...prev,
+      subtasks: prev.subtasks.filter((subtask) => subtask.id !== id)
+    }));
+  };
+
+  const handleToggleSubtask = (id: string) => {
+    setForm((prev) => ({
+      ...prev,
+      subtasks: prev.subtasks.map((subtask) =>
+        subtask.id === id ? { ...subtask, completed: !subtask.completed } : subtask
+      )
+    }));
   };
 
   return (
@@ -223,6 +272,54 @@ export const TaskComposer = ({
               value={form.tagsInput}
               onChangeText={(tagsInput) => setForm((prev) => ({ ...prev, tagsInput }))}
             />
+
+            <View>
+              <Text style={styles.label}>Subtarefas</Text>
+              <View style={styles.subtaskInputRow}>
+                <TextInput
+                  style={[styles.input, styles.subtaskDraftInput]}
+                  placeholder="Descrição da subtarefa"
+                  placeholderTextColor={colors.textMuted}
+                  value={subtaskDraft}
+                  onChangeText={setSubtaskDraft}
+                  onSubmitEditing={handleAddSubtask}
+                  returnKeyType="done"
+                />
+                <Pressable
+                  style={[styles.chipButton, !subtaskDraft.trim() && styles.chipButtonDisabled]}
+                  onPress={handleAddSubtask}
+                  disabled={!subtaskDraft.trim()}
+                >
+                  <Text style={styles.chipButtonLabel}>Adicionar</Text>
+                </Pressable>
+              </View>
+              {form.subtasks.length ? (
+                <View style={styles.subtaskList}>
+                  {form.subtasks.map((subtask) => (
+                    <View key={subtask.id} style={styles.subtaskItem}>
+                      <Pressable
+                        style={[styles.subtaskCheckbox, subtask.completed && styles.subtaskCheckboxChecked]}
+                        onPress={() => handleToggleSubtask(subtask.id)}
+                      >
+                        {subtask.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
+                      </Pressable>
+                      <TextInput
+                        style={[styles.subtaskTextInput, subtask.completed && styles.subtaskTextCompleted]}
+                        value={subtask.title}
+                        placeholder="Descrição"
+                        placeholderTextColor={colors.textMuted}
+                        onChangeText={(text) => handleUpdateSubtask(subtask.id, text)}
+                      />
+                      <Pressable style={styles.subtaskRemove} onPress={() => handleRemoveSubtask(subtask.id)}>
+                        <Text style={styles.subtaskRemoveLabel}>×</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.helperText}>Nenhuma subtarefa cadastrada.</Text>
+              )}
+            </View>
 
             <View>
               <Text style={styles.label}>Prioridade</Text>
@@ -333,6 +430,11 @@ const createStyles = (colors: Palette) =>
       fontSize: 12,
       fontWeight: '600'
     },
+    helperText: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginTop: 6
+    },
     input: {
       borderRadius: 16,
       borderWidth: 1,
@@ -344,6 +446,79 @@ const createStyles = (colors: Palette) =>
     multiline: {
       minHeight: 96,
       textAlignVertical: 'top'
+    },
+    subtaskInputRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center'
+    },
+    subtaskDraftInput: {
+      flex: 1
+    },
+    chipButton: {
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 14,
+      paddingVertical: 10
+    },
+    chipButtonDisabled: {
+      opacity: 0.5
+    },
+    chipButtonLabel: {
+      color: colors.text,
+      fontWeight: '600'
+    },
+    subtaskList: {
+      marginTop: 8,
+      gap: 8
+    },
+    subtaskItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    subtaskCheckbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    subtaskCheckboxChecked: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary
+    },
+    subtaskCheckboxIndicator: {
+      width: 10,
+      height: 10,
+      borderRadius: 3,
+      backgroundColor: colors.background
+    },
+    subtaskTextInput: {
+      flex: 1,
+      color: colors.text,
+      paddingVertical: 0
+    },
+    subtaskTextCompleted: {
+      color: colors.textMuted,
+      textDecorationLine: 'line-through'
+    },
+    subtaskRemove: {
+      paddingHorizontal: 6,
+      paddingVertical: 4
+    },
+    subtaskRemoveLabel: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '700'
     },
     priorityRow: {
       flexDirection: 'row',

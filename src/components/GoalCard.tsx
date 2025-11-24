@@ -45,6 +45,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
   const hasMilestones = goal.milestones.length > 0;
   const startLabel = goal.startDate ? format(new Date(goal.startDate), "dd MMM", { locale: ptBR }) : null;
   const dueLabel = goal.dueDate ? format(new Date(goal.dueDate), "dd MMM", { locale: ptBR }) : null;
+  const progressPercentage = Math.round(goal.progress * 100);
 
   const formatEventLabel = (event: ScheduleEvent) => {
     const dateLabel = format(new Date(event.date), "dd MMMM", { locale: ptBR });
@@ -131,7 +132,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
 
   const progressBubble = (
     <View style={[styles.progressBubble, isCompact && styles.progressBubbleCompact]}>
-      <Text style={styles.progressValue}>{Math.round(goal.progress * 100)}%</Text>
+      <Text style={styles.progressValue}>{progressPercentage}%</Text>
       <Text style={styles.progressLabel}>progresso</Text>
     </View>
   );
@@ -166,6 +167,20 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
         </View>
       </View>
       <Text style={styles.description}>{goal.description}</Text>
+      <View style={styles.progressContainer}>
+        <View style={styles.progressHeaderRow}>
+          <Text style={styles.progressTitle}>Progresso</Text>
+          <Text style={styles.progressPercentLabel}>{progressPercentage}%</Text>
+        </View>
+        <View style={styles.barTrack}>
+          <View style={[styles.barFill, { width: `${progressPercentage}%`, backgroundColor: goal.color }]} />
+        </View>
+        {hasTasks ? (
+          <Text style={styles.taskSummary}>
+            {completedTasks}/{tasks.length} tarefas vinculadas
+          </Text>
+        ) : null}
+      </View>
       {startLabel || dueLabel ? (
         <View style={styles.timelineRow}>
           <View style={styles.timelineBlock}>
@@ -188,16 +203,6 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
           ))}
         </View>
       ) : null}
-      <View style={styles.progressRow}>
-        <View style={styles.barTrack}>
-          <View style={[styles.barFill, { width: `${Math.round(goal.progress * 100)}%`, backgroundColor: goal.color }]} />
-        </View>
-        {hasTasks ? (
-          <Text style={styles.taskSummary}>
-            {completedTasks}/{tasks.length} tarefas
-          </Text>
-        ) : null}
-      </View>
       <View style={styles.sectionStack}>
         {sectionData.map((section) => (
           <View key={section.key} style={styles.sectionCard}>
@@ -336,6 +341,25 @@ const createStyles = (colors: Palette) =>
       fontSize: 11,
       fontWeight: '600'
     },
+    progressContainer: {
+      gap: 6
+    },
+    progressHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    progressTitle: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6
+    },
+    progressPercentLabel: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700'
+    },
     progressBubble: {
       backgroundColor: colors.mutedSurface,
       paddingHorizontal: 12,
@@ -377,11 +401,6 @@ const createStyles = (colors: Palette) =>
       height: 8,
       borderRadius: 999,
       backgroundColor: colors.mutedSurface
-    },
-    progressRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12
     },
     barFill: {
       height: 8,
