@@ -3,12 +3,11 @@ import { useMemo, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, StyleProp, Text, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { CalendarMark, Goal, PlannerNote, ScheduleEvent, ScheduleEventKind } from '@/types/planner';
 import type { Task, TaskSubtask } from '@/types/task';
 import { CalendarPanel } from '@/components/CalendarPanel';
-import { DashboardPanel } from '@/components/DashboardPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { EventComposer } from '@/components/EventComposer';
 import { FilterBar } from '@/components/FilterBar';
@@ -23,7 +22,9 @@ import { SectionMenu } from '@/components/SectionMenu';
 import { StatsStrip } from '@/components/StatsStrip';
 import { TaskCard } from '@/components/TaskCard';
 import { TaskComposer } from '@/components/TaskComposer';
+import { InsightsPanel } from '@/components/InsightsPanel';
 import { usePlannerStore } from '@/state/usePlannerStore';
+import { useInsights } from '@/state/useInsights';
 import { useAuth } from '@/state/AuthContext';
 import type { Palette } from '@/theme/colors';
 import { useColors, useThemeMode } from '@/theme/ThemeProvider';
@@ -115,6 +116,8 @@ export const HomeScreen = () => {
   }, [isWide, styles, width]);
   const {
     ready,
+    version,
+    updatedAt,
     tasks,
     events,
     marks,
@@ -124,7 +127,6 @@ export const HomeScreen = () => {
     filter,
     setFilter,
     taskInsights,
-    plannerInsights,
     goals,
     calendarMatrix,
     agendaByDate,
@@ -152,9 +154,12 @@ export const HomeScreen = () => {
     deleteNote,
     hydrateSnapshot,
     addCategory,
-    deleteCategory
+    deleteCategory,
+    syncStatus,
+    syncNow
   } = usePlannerStore();
   const { user, logout } = useAuth();
+  const { data: insightsOverview, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights();
 
   const goalsById = useMemo(
     () =>
@@ -251,9 +256,19 @@ export const HomeScreen = () => {
     });
   };
 
-  const buildSnapshot = (): PlannerSnapshot => ({ tasks, goals, events, marks, notes, categories });
+  const buildSnapshot = (): PlannerSnapshot => ({
+    version,
+    updatedAt,
+    tasks,
+    goals,
+    events,
+    marks,
+    notes,
+    categories
+  });
 
   const isValidSnapshot = (payload: Partial<PlannerSnapshot>): payload is PlannerSnapshot =>
+    (typeof payload.version === 'number' || payload.version === undefined) &&
     Array.isArray(payload.tasks) &&
     Array.isArray(payload.goals) &&
     Array.isArray(payload.events) &&
@@ -630,10 +645,112 @@ export const HomeScreen = () => {
           <EmptyState title="Sem anotações" description="Combine ideias, moodboards e insights rápidos nesta aba." />
         );
       case 'insights':
+        return (
+          <InsightsPanel
+            overview={insightsOverview}
+            loading={insightsLoading}
+            error={insightsError}
+            onRefresh={refreshInsights}
+          />
+        );
       default:
-        return <DashboardPanel plannerInsights={plannerInsights} taskInsights={taskInsights} />;
+        return null;
     }
   };
+
+  const renderSyncBanner = () => {
+    if (!syncStatus) return null;
+    const { isOnline, queueSize, syncing, lastSyncAt, lastSyncError, requiresAuth, canRetry } = syncStatus;
+    const queueLabel = queueSize === 1 ? '1 alteração pendente' : `${queueSize} alterações pendentes`;
+    const formatTimestamp = () => {
+      if (!lastSyncAt) return 'Ainda não sincronizado nesta sessão.';
+      try {
+        return `Última sync ${format(new Date(lastSyncAt), 'dd/MM HH:mm')}`;
+      } catch (error) {
+        console.warn('Falha ao formatar horário de sync', error);
+        return 'Última sync recente.';
+      }
+    };
+
+    const handleManualSync = () => {
+      if (!canRetry) return;
+      void syncNow();
+    };
+
+    type BannerVariant = 'ghost' | 'accent';
+
+    const renderAction = (label: string, intent: BannerVariant = 'ghost') => {
+      if (!canRetry) return null;
+      return (
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.syncBannerButton, intent === 'accent' ? styles.syncBannerButtonAccent : styles.syncBannerButtonGhost]}
+          onPress={handleManualSync}
+        >
+          <Text style={[styles.syncBannerButtonText, intent === 'accent' && styles.syncBannerButtonTextAccent]}>{label}</Text>
+        </Pressable>
+      );
+    };
+
+    const buildBanner = (
+      accentStyle: StyleProp<ViewStyle>,
+      title: string,
+      description: string,
+      meta?: string,
+      action?: { label: string; intent?: BannerVariant }
+    ) => (
+      <View style={[styles.syncBanner, accentStyle]}>
+        <View style={styles.syncBannerRow}>
+          <View style={styles.syncBannerBody}>
+            <Text style={styles.syncBannerTitle}>{title}</Text>
+            <Text style={styles.syncBannerText}>{description}</Text>
+            {meta ? <Text style={styles.syncBannerMeta}>{meta}</Text> : null}
+          </View>
+          {action ? renderAction(action.label, action.intent) : null}
+        </View>
+      </View>
+    );
+
+    if (requiresAuth && queueSize > 0) {
+      return buildBanner(
+        styles.syncBannerWarning,
+        'Entre para sincronizar',
+        `Faça login para enviar ${queueLabel} ao servidor.`
+      );
+    }
+
+    if (!isOnline) {
+      return buildBanner(
+        styles.syncBannerWarning,
+        'Modo offline',
+        queueSize ? `${queueLabel} serão enviados quando a conexão voltar.` : 'Suas edições ficam salvas localmente.'
+      );
+    }
+
+    if (lastSyncError) {
+      return buildBanner(
+        styles.syncBannerDanger,
+        'Sincronização pausada',
+        lastSyncError,
+        queueSize ? queueLabel : 'Nenhuma alteração pendente.',
+        canRetry ? { label: 'Tentar novamente', intent: 'accent' } : undefined
+      );
+    }
+
+    if (syncing || queueSize > 0) {
+      return buildBanner(
+        styles.syncBannerInfo,
+        syncing ? 'Sincronizando...' : 'Fila pronta para enviar',
+        syncing ? `${queueLabel} em processamento.` : `${queueLabel} serão sincronizadas nos próximos instantes.`,
+        syncing ? undefined : formatTimestamp(),
+        !syncing && canRetry ? { label: 'Sincronizar agora' } : undefined
+      );
+    }
+
+    return buildBanner(styles.syncBannerSuccess, 'Tudo sincronizado', 'Nenhuma alteração pendente.', formatTimestamp());
+  };
+
+  const syncBanner = renderSyncBanner();
 
   const floatingConfig = {
     tasks: {
@@ -785,6 +902,7 @@ export const HomeScreen = () => {
             showsVerticalScrollIndicator={false}
           >
             {header}
+            {syncBanner}
             {renderSection()}
           </ScrollView>
         </View>
@@ -798,6 +916,7 @@ export const HomeScreen = () => {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={[styles.container, isWide && styles.containerWide]} showsVerticalScrollIndicator={false}>
         {header}
+        {syncBanner}
         <SectionTabs value={activeSection} onChange={setSection} />
         {renderSection()}
       </ScrollView>
@@ -834,6 +953,72 @@ const createStyles = (colors: Palette) =>
       alignItems: 'center',
       flexWrap: 'wrap',
       gap: 16
+    },
+    syncBanner: {
+      width: '100%',
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.mutedSurface,
+      marginBottom: 16
+    },
+    syncBannerRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12
+    },
+    syncBannerBody: {
+      flex: 1,
+      gap: 2
+    },
+    syncBannerTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.text,
+      marginBottom: 4
+    },
+    syncBannerText: {
+      fontSize: 13,
+      color: colors.text
+    },
+    syncBannerMeta: {
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: 6
+    },
+    syncBannerButton: {
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderWidth: 1
+    },
+    syncBannerButtonGhost: {
+      borderColor: colors.border
+    },
+    syncBannerButtonAccent: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primary
+    },
+    syncBannerButtonText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.text
+    },
+    syncBannerButtonTextAccent: {
+      color: colors.background
+    },
+    syncBannerWarning: {
+      borderColor: colors.warning
+    },
+    syncBannerDanger: {
+      borderColor: colors.danger
+    },
+    syncBannerSuccess: {
+      borderColor: colors.success
+    },
+    syncBannerInfo: {
+      borderColor: colors.primary
     },
     desktopHeader: {
       flexDirection: 'column',

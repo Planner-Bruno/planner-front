@@ -1,13 +1,17 @@
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { memo, useEffect, useState } from 'react';
-import { Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
+import { LayoutAnimation, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle, UIManager } from 'react-native';
 import type { Task } from '@/types/task';
 import { isOverdue } from '@/utils/taskUtils';
 import type { Palette } from '@/theme/colors';
 import { priorityColors } from '@/theme/colors';
 import { useColors } from '@/theme/ThemeProvider';
 import { useThemedStyles } from '@/theme/useThemedStyles';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface Props {
   task: Task;
@@ -32,6 +36,12 @@ const statusLabel: Record<Task['status'], string> = {
   done: 'Concluída'
 };
 
+const statusProgressFallback: Record<Task['status'], number> = {
+  backlog: 12,
+  in_progress: 56,
+  done: 100
+};
+
 const TaskCardComponent = ({
   task,
   onToggle,
@@ -48,9 +58,10 @@ const TaskCardComponent = ({
   const colors = useColors();
   const styles = useThemedStyles(createStyles);
   const overdue = isOverdue(task);
-  const startLabel = task.startDate ? format(new Date(task.startDate), "dd MMM", { locale: ptBR }) : null;
-  const dueLabel = task.dueDate ? format(new Date(task.dueDate), "dd MMM", { locale: ptBR }) : null;
+  const startLabel = task.startDate ? format(new Date(task.startDate), 'dd MMM', { locale: ptBR }) : null;
+  const dueLabel = task.dueDate ? format(new Date(task.dueDate), 'dd MMM', { locale: ptBR }) : null;
   const [subtaskDraft, setSubtaskDraft] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const totalSubtasks = task.subtasks?.length ?? 0;
   const hasSubtasks = Boolean(totalSubtasks);
   const completedSubtasks = task.subtasks?.filter((subtask) => subtask.completed).length ?? 0;
@@ -59,6 +70,7 @@ const TaskCardComponent = ({
 
   useEffect(() => {
     setSubtaskDraft('');
+    setExpanded(false);
   }, [task.id]);
 
   const handleAddSubtask = () => {
@@ -67,144 +79,218 @@ const TaskCardComponent = ({
     setSubtaskDraft('');
   };
 
+  const handleToggleExpansion = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded((prev) => !prev);
+    onPress?.();
+  };
+
+  const displayProgress = totalSubtasks ? progressPercent : statusProgressFallback[task.status];
+
   return (
-    <Pressable style={({ pressed }) => [styles.card, style, pressed && styles.pressed]} onPress={onPress}>
-      <View style={styles.header}>
-        <View style={styles.headerContent}>
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>{task.title}</Text>
-            <View style={[styles.badge, overdue ? styles.badgeDanger : styles.badgeMuted]}>
-              <Text style={styles.badgeText}>{statusLabel[task.status]}</Text>
+    <View style={[styles.card, expanded && styles.cardExpanded, style]}>
+      <View style={styles.headerRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Recolher tarefa' : 'Expandir tarefa'}
+          style={({ pressed }) => [styles.headerContent, pressed && styles.headerContentPressed]}
+          onPress={handleToggleExpansion}
+        >
+          <Text style={[styles.title, expanded && styles.titleExpanded]} numberOfLines={expanded ? 2 : 1}>
+            {task.title}
+          </Text>
+          {expanded ? (
+            <View style={styles.statusRow}>
+              <View style={[styles.badge, overdue ? styles.badgeDanger : styles.badgeMuted]}>
+                <Text style={styles.badgeText}>{statusLabel[task.status]}</Text>
+              </View>
             </View>
-          </View>
-          {task.description ? <Text style={styles.description}>{task.description}</Text> : null}
-        </View>
-        <View style={styles.headerActions}>
+          ) : null}
+          {goalMeta ? (
+            <View style={styles.goalBreadcrumb}>
+              <Text style={styles.goalBreadcrumbLabel}>Objetivo</Text>
+              <View style={styles.goalBreadcrumbValueRow}>
+                <View style={[styles.goalBadgeDot, styles.goalBreadcrumbDot, { backgroundColor: goalMeta.color }]} />
+                <Text style={styles.goalBreadcrumbValue} numberOfLines={1}>
+                  {goalMeta.title}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+        </Pressable>
+        <View style={styles.headerControls}>
           {onEdit ? (
-            <Pressable style={styles.chip} onPress={onEdit}>
-              <Text style={styles.chipLabel}>Editar</Text>
+            <Pressable style={styles.headerChip} onPress={onEdit}>
+              <Text style={styles.headerChipLabel}>Editar</Text>
             </Pressable>
           ) : null}
           {onDelete ? (
-            <Pressable style={[styles.chip, styles.deleteChip]} onPress={onDelete}>
-              <Text style={[styles.chipLabel, styles.deleteLabel]}>Excluir</Text>
+            <Pressable style={[styles.headerChip, styles.headerDeleteChip]} onPress={onDelete}>
+              <Text style={[styles.headerChipLabel, styles.headerDeleteLabel]}>Excluir</Text>
             </Pressable>
           ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={expanded ? 'Recolher detalhes' : 'Expandir detalhes'}
+            style={({ pressed }) => [styles.toggleButton, pressed && styles.toggleButtonPressed]}
+            onPress={handleToggleExpansion}
+          >
+            <Text style={styles.toggleLabel}>{expanded ? '−' : '+'}</Text>
+          </Pressable>
         </View>
       </View>
 
-      {hasSubtasks ? (
-        <View style={styles.progressSection}>
-          <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Progresso das subtarefas</Text>
-            <Text style={styles.progressValue}>{progressPercent}%</Text>
-          </View>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
-          </View>
-        </View>
-      ) : null}
+      {expanded ? (
+        <>
+          {task.description ? <Text style={styles.description}>{task.description}</Text> : null}
 
-      <View style={styles.metaRow}>
-        <View style={styles.metaPill}>
-          <View style={[styles.dot, { backgroundColor: priorityColors[task.priority] }]} />
-          <Text style={styles.metaLabel}>{task.priority.toUpperCase()}</Text>
-        </View>
-        <View style={styles.metaPill}>
-          <View style={[styles.dot, { backgroundColor: task.categoryColor ?? colors.border }]} />
-          <Text style={styles.metaLabel}>{task.category}</Text>
-        </View>
-        {goalMeta ? (
-          <View style={[styles.metaPill, styles.goalPill, { borderColor: goalMeta.color }]}>
-            <View style={[styles.goalBadgeDot, { backgroundColor: goalMeta.color }]} />
-            <Text style={styles.metaLabel} numberOfLines={1}>
-              {goalMeta.title}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      {startLabel || dueLabel ? (
-        <View style={styles.timelineRow}>
-          {startLabel ? <Text style={styles.timelineLabel}>Início · {startLabel}</Text> : <Text style={styles.timelineLabel}>Início · —</Text>}
-          <View style={styles.timelineDivider} />
-          {dueLabel ? (
-            <Text style={[styles.timelineLabel, overdue && styles.dangerText]}>Previsão · {dueLabel}</Text>
-          ) : (
-            <Text style={[styles.timelineLabel, overdue && styles.dangerText]}>Previsão · —</Text>
-          )}
-        </View>
-      ) : null}
-
-      {task.tags?.length ? (
-        <View style={styles.tagRow}>
-          {task.tags.map((tag, index) => (
-            <View key={`${task.id}-${tag}-${index}`} style={styles.tagChip}>
-              <Text style={styles.tagLabel}>#{tag}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {(hasSubtasks || onAddSubtask) ? (
-        <View style={styles.subtaskSection}>
           {hasSubtasks ? (
-            <View style={styles.subtaskList}>
-              {task.subtasks.map((subtask) => (
-                <View key={subtask.id} style={styles.subtaskItem}>
-                  <Pressable
-                    style={[styles.subtaskCheckbox, subtask.completed && styles.subtaskCheckboxChecked]}
-                    onPress={() => onToggleSubtask?.(subtask.id)}
-                  >
-                    {subtask.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
-                  </Pressable>
-                  <Text style={[styles.subtaskLabel, subtask.completed && styles.subtaskCompleted]} numberOfLines={2}>
-                    {subtask.title}
-                  </Text>
-                  {onRemoveSubtask ? (
-                    <Pressable style={styles.subtaskRemove} onPress={() => onRemoveSubtask(subtask.id)}>
-                      <Text style={styles.subtaskRemoveLabel}>×</Text>
-                    </Pressable>
-                  ) : null}
+            <View style={styles.progressSection}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressLabel}>Progresso das subtarefas</Text>
+                <Text style={styles.progressValue}>{progressPercent}%</Text>
+              </View>
+              <View style={styles.progressBar}>
+                <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+              </View>
+            </View>
+          ) : null}
+
+          <View style={styles.metaRow}>
+            <View style={styles.metaPill}>
+              <View style={[styles.dot, { backgroundColor: priorityColors[task.priority] }]} />
+              <Text style={styles.metaLabel}>{task.priority.toUpperCase()}</Text>
+            </View>
+            <View style={styles.metaPill}>
+              <View style={[styles.dot, { backgroundColor: task.categoryColor ?? colors.border }]} />
+              <Text style={styles.metaLabel}>{task.category}</Text>
+            </View>
+            {goalMeta ? (
+              <View style={[styles.metaPill, styles.goalPill, { borderColor: goalMeta.color }]}>
+                <View style={[styles.goalBadgeDot, { backgroundColor: goalMeta.color }]} />
+                <Text style={styles.metaLabel} numberOfLines={1}>
+                  {goalMeta.title}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {startLabel || dueLabel ? (
+            <View style={styles.timelineRow}>
+              {startLabel ? <Text style={styles.timelineLabel}>Início · {startLabel}</Text> : <Text style={styles.timelineLabel}>Início · —</Text>}
+              <View style={styles.timelineDivider} />
+              {dueLabel ? (
+                <Text style={[styles.timelineLabel, overdue && styles.dangerText]}>Previsão · {dueLabel}</Text>
+              ) : (
+                <Text style={[styles.timelineLabel, overdue && styles.dangerText]}>Previsão · —</Text>
+              )}
+            </View>
+          ) : null}
+
+          {task.tags?.length ? (
+            <View style={styles.tagRow}>
+              {task.tags.map((tag, index) => (
+                <View key={`${task.id}-${tag}-${index}`} style={styles.tagChip}>
+                  <Text style={styles.tagLabel}>#{tag}</Text>
                 </View>
               ))}
             </View>
-          ) : (
-            <Text style={styles.helperText}>Nenhuma subtarefa cadastrada ainda.</Text>
-          )}
+          ) : null}
 
-          {onAddSubtask ? (
-            <View style={styles.subtaskInputRow}>
-              <TextInput
-                style={styles.subtaskInput}
-                placeholder="Adicionar subtarefa"
-                placeholderTextColor={colors.textMuted}
-                value={subtaskDraft}
-                onChangeText={setSubtaskDraft}
-                onSubmitEditing={handleAddSubtask}
-                returnKeyType="done"
-              />
-              <Pressable
-                style={[styles.subtaskAddButton, !canAddSubtask && styles.subtaskAddButtonDisabled]}
-                onPress={handleAddSubtask}
-                disabled={!canAddSubtask}
-              >
-                <Text style={styles.subtaskAddLabel}>Adicionar</Text>
-              </Pressable>
+          {(hasSubtasks || onAddSubtask) ? (
+            <View style={styles.subtaskSection}>
+              {hasSubtasks ? (
+                <View style={styles.subtaskList}>
+                  {task.subtasks.map((subtask) => (
+                    <View key={subtask.id} style={styles.subtaskItem}>
+                      <Pressable
+                        style={[styles.subtaskCheckbox, subtask.completed && styles.subtaskCheckboxChecked]}
+                        onPress={() => onToggleSubtask?.(subtask.id)}
+                      >
+                        {subtask.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
+                      </Pressable>
+                      <Text style={[styles.subtaskLabel, subtask.completed && styles.subtaskCompleted]} numberOfLines={2}>
+                        {subtask.title}
+                      </Text>
+                      {onRemoveSubtask ? (
+                        <Pressable style={styles.subtaskRemove} onPress={() => onRemoveSubtask(subtask.id)}>
+                          <Text style={styles.subtaskRemoveLabel}>×</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.helperText}>Nenhuma subtarefa cadastrada ainda.</Text>
+              )}
+
+              {onAddSubtask ? (
+                <View style={styles.subtaskInputRow}>
+                  <TextInput
+                    style={styles.subtaskInput}
+                    placeholder="Adicionar subtarefa"
+                    placeholderTextColor={colors.textMuted}
+                    value={subtaskDraft}
+                    onChangeText={setSubtaskDraft}
+                    onSubmitEditing={handleAddSubtask}
+                    returnKeyType="done"
+                  />
+                  <Pressable
+                    style={[styles.subtaskAddButton, !canAddSubtask && styles.subtaskAddButtonDisabled]}
+                    onPress={handleAddSubtask}
+                    disabled={!canAddSubtask}
+                  >
+                    <Text style={styles.subtaskAddLabel}>Adicionar</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           ) : null}
-        </View>
-      ) : null}
 
-      <View style={styles.actions}>
-        <Pressable style={[styles.actionButton, styles.secondaryAction]} onPress={onAdvance}>
-          <Text style={styles.actionText}>Próxima etapa</Text>
-        </Pressable>
-        <Pressable style={[styles.actionButton, styles.primaryAction]} onPress={onToggle}>
-          <Text style={styles.primaryText}>{task.status === 'done' ? 'Reabrir' : 'Concluir'}</Text>
-        </Pressable>
-      </View>
-    </Pressable>
+          <View style={styles.actions}>
+            <Pressable style={[styles.actionButton, styles.secondaryAction]} onPress={onAdvance}>
+              <Text style={styles.actionText}>Próxima etapa</Text>
+            </Pressable>
+            <Pressable style={[styles.actionButton, styles.primaryAction]} onPress={onToggle}>
+              <Text style={styles.primaryText}>{task.status === 'done' ? 'Reabrir' : 'Concluir'}</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <View style={styles.collapsedBody}>
+          <View style={styles.collapsedProgress}>
+            <View style={styles.collapsedProgressHeader}>
+              <Text style={styles.collapsedProgressLabel}>Progresso</Text>
+              <Text style={styles.collapsedProgressValue}>{displayProgress}%</Text>
+            </View>
+            <View style={styles.collapsedProgressBar}>
+              <View style={[styles.collapsedProgressFill, { width: `${displayProgress}%` }]} />
+            </View>
+          </View>
+          <View style={styles.collapsedInfoRow}>
+            <View style={styles.collapsedChip}>
+              <Text style={styles.collapsedChipLabel}>Prioridade</Text>
+              <Text style={styles.collapsedChipValue}>{task.priority.toUpperCase()}</Text>
+            </View>
+            <View style={styles.collapsedChip}>
+              <Text style={styles.collapsedChipLabel}>Previsão</Text>
+              <Text style={[styles.collapsedChipValue, overdue && styles.dangerText]}>{dueLabel ?? '—'}</Text>
+            </View>
+            {goalMeta ? (
+              <View style={[styles.collapsedChip, styles.collapsedGoalChip]}>
+                <Text style={styles.collapsedChipLabel}>Objetivo</Text>
+                <View style={styles.collapsedChipValueRow}>
+                  <View style={[styles.goalBadgeDot, styles.collapsedGoalDot, { backgroundColor: goalMeta.color }]} />
+                  <Text style={styles.collapsedChipValue} numberOfLines={1}>
+                    {goalMeta.title}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      )}
+    </View>
   );
 };
 
@@ -219,33 +305,50 @@ const createStyles = (colors: Palette) =>
       gap: 12,
       width: '100%'
     },
-    pressed: {
-      opacity: 0.85
+    cardExpanded: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.08,
+      shadowRadius: 16,
+      elevation: 6
     },
-    header: {
+    headerRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'flex-start',
+      justifyContent: 'space-between',
       gap: 12
     },
     headerContent: {
       flex: 1,
-      gap: 6
+      gap: 4
     },
-    titleRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-      gap: 12
+    headerContentPressed: {
+      opacity: 0.85
     },
-    headerActions: {
+    headerControls: {
       flexDirection: 'row',
-      justifyContent: 'flex-end',
-      flexWrap: 'wrap',
-      gap: 6,
       alignItems: 'center',
-      alignSelf: 'flex-start',
-      flexShrink: 0
+      gap: 8,
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end'
+    },
+    headerChip: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 10,
+      paddingVertical: 4
+    },
+    headerDeleteChip: {
+      borderColor: colors.danger
+    },
+    headerChipLabel: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    headerDeleteLabel: {
+      color: colors.danger
     },
     title: {
       color: colors.text,
@@ -253,11 +356,64 @@ const createStyles = (colors: Palette) =>
       fontWeight: '600',
       flexShrink: 1
     },
+    titleExpanded: {
+      fontSize: 20
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center'
+    },
     description: {
       color: colors.textMuted,
       marginTop: 4,
       fontSize: 14,
       flexShrink: 1
+    },
+    goalBreadcrumb: {
+      gap: 4,
+      marginTop: 2,
+      flexShrink: 1
+    },
+    goalBreadcrumbValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      flexShrink: 1
+    },
+    goalBreadcrumbDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3
+    },
+    goalBreadcrumbLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6
+    },
+    goalBreadcrumbValue: {
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+      flexShrink: 1
+    },
+    toggleButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.background
+    },
+    toggleButtonPressed: {
+      backgroundColor: colors.mutedSurface
+    },
+    toggleLabel: {
+      color: colors.text,
+      fontSize: 20,
+      fontWeight: '700'
     },
     badge: {
       paddingHorizontal: 12,
@@ -509,6 +665,79 @@ const createStyles = (colors: Palette) =>
     primaryText: {
       color: colors.background,
       fontWeight: '600'
+    },
+    collapsedBody: {
+      gap: 12
+    },
+    collapsedProgress: {
+      gap: 6
+    },
+    collapsedProgressHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    collapsedProgressLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textTransform: 'uppercase'
+    },
+    collapsedProgressValue: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700'
+    },
+    collapsedProgressBar: {
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: colors.mutedSurface,
+      overflow: 'hidden'
+    },
+    collapsedProgressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: colors.primary
+    },
+    collapsedInfoRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
+    },
+    collapsedChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 14,
+      backgroundColor: colors.mutedSurface,
+      gap: 2,
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      minWidth: 100,
+      flexShrink: 1
+    },
+    collapsedChipValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      width: '100%'
+    },
+    collapsedGoalChip: {
+      minWidth: 0
+    },
+    collapsedGoalDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3
+    },
+    collapsedChipLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '600'
+    },
+    collapsedChipValue: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '600',
+      flexShrink: 1
     }
   });
 

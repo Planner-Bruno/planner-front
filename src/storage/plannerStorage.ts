@@ -6,6 +6,8 @@ import type { Task } from '@/types/task';
 const STORAGE_KEY = 'planner.superapp@v1';
 
 export interface PlannerSnapshot {
+  version: number;
+  updatedAt?: string | null;
   tasks: Task[];
   goals: Goal[];
   events: ScheduleEvent[];
@@ -17,6 +19,8 @@ export interface PlannerSnapshot {
 const cloneCategories = (): PlannerCategory[] => defaultCategories.map((category) => ({ ...category }));
 
 export const buildEmptySnapshot = (): PlannerSnapshot => ({
+  version: 0,
+  updatedAt: null,
   tasks: [],
   goals: [],
   events: [],
@@ -25,14 +29,23 @@ export const buildEmptySnapshot = (): PlannerSnapshot => ({
   categories: cloneCategories()
 });
 
-export const normalizeSnapshot = (snapshot?: PlannerSnapshot | null): PlannerSnapshot => ({
-  tasks: snapshot?.tasks ?? [],
-  goals: snapshot?.goals ?? [],
-  events: snapshot?.events ?? [],
-  marks: snapshot?.marks ?? [],
-  notes: snapshot?.notes ?? [],
-  categories: snapshot?.categories?.length ? snapshot.categories : cloneCategories()
-});
+export const normalizeSnapshot = (snapshot?: PlannerSnapshot | null): PlannerSnapshot => {
+  const raw = snapshot as Record<string, unknown> | undefined;
+  const versionValue = raw?.['version'];
+  const updatedAtValue = raw?.['updatedAt'] ?? raw?.['updated_at'] ?? null;
+  const resolvedVersion = typeof versionValue === 'number' ? (versionValue as number) : 0;
+  const resolvedUpdatedAt = typeof updatedAtValue === 'string' ? (updatedAtValue as string) : null;
+  return {
+    version: resolvedVersion,
+    updatedAt: resolvedUpdatedAt,
+    tasks: snapshot?.tasks ?? [],
+    goals: snapshot?.goals ?? [],
+    events: snapshot?.events ?? [],
+    marks: snapshot?.marks ?? [],
+    notes: snapshot?.notes ?? [],
+    categories: snapshot?.categories?.length ? snapshot.categories : cloneCategories()
+  };
+};
 
 export const loadPlannerSnapshot = async (): Promise<PlannerSnapshot | null> => {
   try {

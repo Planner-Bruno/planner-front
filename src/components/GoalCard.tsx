@@ -1,11 +1,15 @@
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, useWindowDimensions, View } from 'react-native';
 import type { Goal, PlannerNote, ScheduleEvent } from '@/types/planner';
 import type { Task } from '@/types/task';
 import type { Palette } from '@/theme/colors';
 import { useColors } from '@/theme/ThemeProvider';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface Props {
   goal: Goal;
@@ -27,6 +31,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isCompact = width < 640;
+  const [expanded, setExpanded] = useState(false);
   const completedTasks = tasks.filter((task) => task.status === 'done').length;
   const hasTasks = tasks.length > 0;
   const previewTasks = tasks.slice(0, 3);
@@ -46,6 +51,17 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
   const startLabel = goal.startDate ? format(new Date(goal.startDate), "dd MMM", { locale: ptBR }) : null;
   const dueLabel = goal.dueDate ? format(new Date(goal.dueDate), "dd MMM", { locale: ptBR }) : null;
   const progressPercentage = Math.round(goal.progress * 100);
+  const fallbackPriority: Task['priority'] = goal.linkedTasks.length > 3 ? 'high' : goal.linkedTasks.length > 0 ? 'medium' : 'low';
+  const priorityLabel = (goal.priority ?? fallbackPriority).toUpperCase();
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [goal.id]);
+
+  const handleToggleExpansion = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded((prev) => !prev);
+  };
 
   const formatEventLabel = (event: ScheduleEvent) => {
     const dateLabel = format(new Date(event.date), "dd MMMM", { locale: ptBR });
@@ -130,89 +146,147 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
     }
   ];
 
-  const progressBubble = (
-    <View style={[styles.progressBubble, isCompact && styles.progressBubbleCompact]}>
-      <Text style={styles.progressValue}>{progressPercentage}%</Text>
-      <Text style={styles.progressLabel}>progresso</Text>
-    </View>
-  );
-
   return (
-    <View style={[styles.card, { borderColor: goal.color }]}>
-      <View style={styles.header}>
-        <View style={[styles.headerPrimary, isCompact && styles.headerPrimaryCompact]}>
-          <View style={styles.headerText}>
+    <View style={[styles.card, expanded && styles.cardExpanded, { borderColor: goal.color }]}>
+      <View style={styles.goalHeaderRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Recolher objetivo' : 'Expandir objetivo'}
+          style={({ pressed }) => [styles.goalHeaderContent, pressed && styles.goalHeaderContentPressed]}
+          onPress={handleToggleExpansion}
+        >
+          <View style={styles.goalTitleColumn}>
             <View style={styles.categoryRow}>
               <View style={[styles.categoryDot, { backgroundColor: goal.categoryColor ?? colors.textMuted }]} />
               <Text style={styles.category}>{goal.category.toUpperCase()}</Text>
             </View>
-            <Text style={styles.title}>{goal.title}</Text>
+            <Text style={[styles.title, expanded && styles.titleExpanded]} numberOfLines={expanded ? 2 : 1}>
+              {goal.title}
+            </Text>
           </View>
-          {isCompact ? progressBubble : null}
-        </View>
-        <View style={[styles.actions, isCompact && styles.actionsStacked]}>
-          {!isCompact ? progressBubble : null}
-          <View style={[styles.actionRow, isCompact && styles.actionRowStacked]}>
-            {onEdit ? (
-              <Pressable style={styles.editChip} onPress={() => onEdit(goal)}>
-                <Text style={styles.editLabel}>Editar</Text>
-              </Pressable>
-            ) : null}
-            {onDelete ? (
-              <Pressable style={[styles.editChip, styles.deleteChip]} onPress={() => onDelete(goal)}>
-                <Text style={[styles.editLabel, styles.deleteLabel]}>Excluir</Text>
-              </Pressable>
-            ) : null}
-          </View>
+          {expanded && goal.description ? <Text style={styles.description}>{goal.description}</Text> : null}
+        </Pressable>
+        <View style={styles.goalHeaderControls}>
+          {onEdit ? (
+            <Pressable style={styles.goalHeaderChip} onPress={() => onEdit(goal)}>
+              <Text style={styles.goalHeaderChipLabel}>Editar</Text>
+            </Pressable>
+          ) : null}
+          {onDelete ? (
+            <Pressable style={[styles.goalHeaderChip, styles.goalHeaderDeleteChip]} onPress={() => onDelete(goal)}>
+              <Text style={[styles.goalHeaderChipLabel, styles.goalHeaderDeleteLabel]}>Excluir</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={expanded ? 'Recolher detalhes' : 'Expandir detalhes'}
+            style={({ pressed }) => [styles.toggleButton, pressed && styles.toggleButtonPressed]}
+            onPress={handleToggleExpansion}
+          >
+            <Text style={styles.toggleLabel}>{expanded ? '−' : '+'}</Text>
+          </Pressable>
         </View>
       </View>
-      <Text style={styles.description}>{goal.description}</Text>
-      <View style={styles.progressContainer}>
-        <View style={styles.progressHeaderRow}>
-          <Text style={styles.progressTitle}>Progresso</Text>
-          <Text style={styles.progressPercentLabel}>{progressPercentage}%</Text>
-        </View>
-        <View style={styles.barTrack}>
-          <View style={[styles.barFill, { width: `${progressPercentage}%`, backgroundColor: goal.color }]} />
-        </View>
-        {hasTasks ? (
-          <Text style={styles.taskSummary}>
-            {completedTasks}/{tasks.length} tarefas vinculadas
-          </Text>
-        ) : null}
-      </View>
-      {startLabel || dueLabel ? (
-        <View style={styles.timelineRow}>
-          <View style={styles.timelineBlock}>
-            <Text style={styles.timelineEyebrow}>Início</Text>
-            <Text style={styles.timelineValue}>{startLabel ?? '—'}</Text>
-          </View>
-          <View style={styles.timelineDivider} />
-          <View style={styles.timelineBlock}>
-            <Text style={styles.timelineEyebrow}>Previsão</Text>
-            <Text style={styles.timelineValue}>{dueLabel ?? '—'}</Text>
-          </View>
-        </View>
-      ) : null}
-      {goal.tags?.length ? (
-        <View style={styles.tagRow}>
-          {goal.tags.map((tag, index) => (
-            <View key={`${goal.id}-${tag}-${index}`} style={styles.tagChip}>
-              <Text style={styles.tagLabel}>#{tag}</Text>
+
+      {expanded ? (
+        <>
+          <View style={styles.goalActionBar}>
+            <View style={[styles.progressBubble, isCompact && styles.progressBubbleCompact]}>
+              <Text style={styles.progressValue}>{progressPercentage}%</Text>
+              <Text style={styles.progressLabel}>progresso</Text>
             </View>
-          ))}
-        </View>
-      ) : null}
-      <View style={styles.sectionStack}>
-        {sectionData.map((section) => (
-          <View key={section.key} style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionLabel}>{section.title}</Text>
-            </View>
-            {section.content}
           </View>
-        ))}
-      </View>
+
+          <View style={styles.progressContainer}>
+            <View style={styles.progressHeaderRow}>
+              <Text style={styles.progressTitle}>Progresso</Text>
+              <Text style={styles.progressPercentLabel}>{progressPercentage}%</Text>
+            </View>
+            <View style={styles.barTrack}>
+              <View style={[styles.barFill, { width: `${progressPercentage}%`, backgroundColor: goal.color }]} />
+            </View>
+            {hasTasks ? (
+              <Text style={styles.taskSummary}>
+                {completedTasks}/{tasks.length} tarefas vinculadas
+              </Text>
+            ) : null}
+          </View>
+
+          <View style={styles.detailChipRow}>
+            <View style={styles.detailChip}>
+              <Text style={styles.detailChipLabel}>Prioridade</Text>
+              <Text style={styles.detailChipValue}>{priorityLabel}</Text>
+            </View>
+            <View style={styles.detailChip}>
+              <Text style={styles.detailChipLabel}>Objetivo</Text>
+              <Text style={styles.detailChipValue}>{goal.category}</Text>
+            </View>
+          </View>
+
+          {startLabel || dueLabel ? (
+            <View style={styles.timelineRow}>
+              <View style={styles.timelineBlock}>
+                <Text style={styles.timelineEyebrow}>Início</Text>
+                <Text style={styles.timelineValue}>{startLabel ?? '—'}</Text>
+              </View>
+              <View style={styles.timelineDivider} />
+              <View style={styles.timelineBlock}>
+                <Text style={styles.timelineEyebrow}>Previsão</Text>
+                <Text style={styles.timelineValue}>{dueLabel ?? '—'}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {goal.tags?.length ? (
+            <View style={styles.tagRow}>
+              {goal.tags.map((tag, index) => (
+                <View key={`${goal.id}-${tag}-${index}`} style={styles.tagChip}>
+                  <Text style={styles.tagLabel}>#{tag}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          <View style={styles.sectionStack}>
+            {sectionData.map((section) => (
+              <View key={section.key} style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionLabel}>{section.title}</Text>
+                </View>
+                {section.content}
+              </View>
+            ))}
+          </View>
+        </>
+      ) : (
+        <View style={styles.collapsedBody}>
+          <View style={styles.collapsedProgress}>
+            <View style={styles.collapsedProgressHeader}>
+              <Text style={styles.collapsedProgressLabel}>Progresso</Text>
+              <Text style={styles.collapsedProgressValue}>{progressPercentage}%</Text>
+            </View>
+            <View style={styles.collapsedProgressBar}>
+              <View style={[styles.collapsedProgressFill, { width: `${progressPercentage}%`, backgroundColor: goal.color }]} />
+            </View>
+          </View>
+          <View style={styles.collapsedInfoRow}>
+            <View style={styles.collapsedChip}>
+              <Text style={styles.collapsedChipLabel}>Prioridade</Text>
+              <Text style={styles.collapsedChipValue}>{priorityLabel}</Text>
+            </View>
+            <View style={styles.collapsedChip}>
+              <Text style={styles.collapsedChipLabel}>Previsão</Text>
+              <Text style={styles.collapsedChipValue}>{dueLabel ?? '—'}</Text>
+            </View>
+            <View style={[styles.collapsedChip, styles.collapsedGoalChip]}>
+              <Text style={styles.collapsedChipLabel}>Objetivo</Text>
+              <Text style={styles.collapsedChipValue} numberOfLines={1}>
+                {goal.category}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -227,49 +301,74 @@ const createStyles = (colors: Palette) =>
       borderColor: colors.border,
       gap: 12
     },
-    header: {
+    cardExpanded: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.08,
+      shadowRadius: 18,
+      elevation: 8
+    },
+    goalHeaderRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'flex-start',
-      flexWrap: 'wrap',
+      justifyContent: 'space-between',
       gap: 12
     },
-    headerPrimary: {
-      flexShrink: 1,
-      flexGrow: 1,
-      gap: 8
-    },
-    headerPrimaryCompact: {
-      width: '100%',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start'
-    },
-    headerText: {
-      flexShrink: 1,
-      minWidth: 220,
-      gap: 4
-    },
-    actions: {
-      alignItems: 'flex-end',
-      gap: 8,
-      flexShrink: 1,
-      minWidth: 160
-    },
-    actionsStacked: {
-      width: '100%',
+    goalHeaderContent: {
+      flex: 1,
+      gap: 6,
+      alignItems: 'flex-start',
       alignSelf: 'stretch'
     },
-    actionRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'flex-end',
-      gap: 8,
-      marginTop: 4
-    },
-    actionRowStacked: {
+    goalTitleColumn: {
       width: '100%',
+      gap: 4
+    },
+    goalHeaderContentPressed: {
+      opacity: 0.85
+    },
+    goalHeaderControls: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
       justifyContent: 'flex-end'
+    },
+    toggleButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.background
+    },
+    toggleButtonPressed: {
+      backgroundColor: colors.mutedSurface
+    },
+    toggleLabel: {
+      color: colors.text,
+      fontSize: 22,
+      fontWeight: '700'
+    },
+    goalHeaderChip: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 6
+    },
+    goalHeaderChipLabel: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    goalHeaderDeleteChip: {
+      borderColor: colors.danger
+    },
+    goalHeaderDeleteLabel: {
+      color: colors.danger
     },
     categoryRow: {
       flexDirection: 'row',
@@ -292,11 +391,18 @@ const createStyles = (colors: Palette) =>
       fontWeight: '700',
       flexShrink: 1
     },
+    titleExpanded: {
+      fontSize: 20
+    },
     description: {
       color: colors.textMuted,
       fontSize: 14,
       flexShrink: 1,
       lineHeight: 20
+    },
+    goalActionBar: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end'
     },
     timelineRow: {
       flexDirection: 'row',
@@ -379,23 +485,89 @@ const createStyles = (colors: Palette) =>
       color: colors.textMuted,
       fontSize: 11
     },
-    editChip: {
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingHorizontal: 12,
-      paddingVertical: 6
+    detailChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 4
     },
-    editLabel: {
+    detailChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      backgroundColor: colors.mutedSurface,
+      minWidth: 120,
+      gap: 2,
+      flexDirection: 'column'
+    },
+    detailChipLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textTransform: 'uppercase'
+    },
+    detailChipValue: {
       color: colors.text,
-      fontSize: 12,
+      fontSize: 14,
       fontWeight: '600'
     },
-    deleteChip: {
-      borderColor: colors.danger
+    collapsedBody: {
+      gap: 10
     },
-    deleteLabel: {
-      color: colors.danger
+    collapsedProgress: {
+      gap: 6
+    },
+    collapsedProgressHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    collapsedProgressLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textTransform: 'uppercase'
+    },
+    collapsedProgressValue: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700'
+    },
+    collapsedProgressBar: {
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: colors.mutedSurface,
+      overflow: 'hidden'
+    },
+    collapsedProgressFill: {
+      height: '100%',
+      borderRadius: 999
+    },
+    collapsedInfoRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
+    },
+    collapsedChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      backgroundColor: colors.mutedSurface,
+      gap: 2,
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      minWidth: 90
+    },
+    collapsedGoalChip: {
+      alignItems: 'flex-start'
+    },
+    collapsedChipLabel: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '600'
+    },
+    collapsedChipValue: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '600'
     },
     barTrack: {
       height: 8,

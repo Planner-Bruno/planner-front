@@ -1,16 +1,30 @@
 import { format } from 'date-fns';
-import { useEffect, useMemo, useReducer } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { CalendarMark, Goal, Milestone, PlannerCategory, PlannerNote, PlannerSection, ScheduleEvent } from '@/types/planner';
 import type { EditableTaskFields, Task, TaskFilter } from '@/types/task';
-import { computePlannerInsights, calculateGoalProgress, buildCalendarMatrix, createGoal, createScheduleEvent, createCalendarMark, createNote, groupAgendaByDate } from '@/utils/plannerUtils';
+import { calculateGoalProgress, buildCalendarMatrix, createGoal, createScheduleEvent, createCalendarMark, createNote, groupAgendaByDate } from '@/utils/plannerUtils';
 import { createTask, filterTasks, getDefaultFilter, getTaskInsights, promoteTask, toggleStatus, updateTaskFields } from '@/utils/taskUtils';
 import { buildEmptySnapshot, loadPlannerSnapshot, normalizeSnapshot, persistPlannerSnapshot, type PlannerSnapshot } from '@/storage/plannerStorage';
+import { clearSyncQueue, loadSyncQueue, replaceQueue, type SyncOperation } from '@/storage/syncQueue';
 import { defaultCategories } from '@/data/defaultCategories';
-import { fetchPlannerSnapshot, persistPlannerSnapshotRemote } from '@/services/plannerApi';
+import { fetchPlannerSnapshot, PlannerSyncConflict, syncPlannerOperations } from '@/services/plannerApi';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useAuth } from '@/state/AuthContext';
+
+interface SyncStatus {
+  queueSize: number;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  isOnline: boolean;
+  requiresAuth: boolean;
+  canRetry: boolean;
+}
 
 interface PlannerState {
   ready: boolean;
+  version: number;
+  updatedAt: string | null;
   tasks: Task[];
   goals: Goal[];
   events: ScheduleEvent[];
@@ -25,15 +39,9 @@ interface PlannerState {
 type Action =
   | {
       type: 'HYDRATE';
-      payload: {
-        tasks: Task[];
-        goals: Goal[];
-        events: ScheduleEvent[];
-        marks: CalendarMark[];
-        notes: PlannerNote[];
-        categories: PlannerCategory[];
-      };
+      payload: PlannerSnapshot;
     }
+  | { type: 'SET_META'; payload: { version: number; updatedAt: string | null } }
   | { type: 'SET_SECTION'; payload: PlannerSection }
   | { type: 'SET_DATE'; payload: string }
   | { type: 'SET_FILTER'; payload: Partial<TaskFilter> }
@@ -57,8 +65,130 @@ type Action =
   | { type: 'ADD_CATEGORY'; payload: PlannerCategory }
   | { type: 'DELETE_CATEGORY'; payload: { id: PlannerCategory['id'] } };
 
+const COLLECTION_KEYS = ['tasks', 'goals', 'events', 'marks', 'notes', 'categories'] as const;
+type CollectionKey = (typeof COLLECTION_KEYS)[number];
+
+const entityIdOf = (entity: { id?: string | number } | undefined): string | null => {
+  if (!entity || entity.id === undefined || entity.id === null) return null;
+  return String(entity.id);
+};
+
+const toComparable = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => toComparable(item));
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return entries.reduce<Record<string, unknown>>((acc, [key, nested]) => {
+      acc[key] = toComparable(nested);
+      return acc;
+    }, {});
+  }
+  return value;
+};
+
+const areEntitiesEqual = (a: Record<string, unknown>, b: Record<string, unknown>): boolean => {
+  if (a === b) return true;
+  return JSON.stringify(toComparable(a)) === JSON.stringify(toComparable(b));
+};
+
+const sortOperations = (operations: SyncOperation[]): SyncOperation[] =>
+  [...operations].sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
+
+const diffCollection = <T extends { id?: string | number }>(
+  previous: T[],
+  next: T[],
+  entityType: SyncOperation['entityType'],
+  baseVersion: number,
+  createTimestamp: () => string
+): SyncOperation[] => {
+  const operations: SyncOperation[] = [];
+  const previousMap = new Map<string, T>();
+  const nextMap = new Map<string, T>();
+
+  previous.forEach((item) => {
+    const id = entityIdOf(item);
+    if (id) previousMap.set(id, item);
+  });
+  next.forEach((item) => {
+    const id = entityIdOf(item);
+    if (id) nextMap.set(id, item);
+  });
+
+  nextMap.forEach((item, id) => {
+    const existing = previousMap.get(id);
+    if (!existing) {
+      operations.push({
+        id: `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        entityType,
+        entityId: id,
+        changeType: 'create',
+        payload: item as Record<string, unknown>,
+        baseVersion,
+        timestamp: createTimestamp()
+      });
+      return;
+    }
+
+    if (!areEntitiesEqual(existing as Record<string, unknown>, item as Record<string, unknown>)) {
+      operations.push({
+        id: `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        entityType,
+        entityId: id,
+        changeType: 'update',
+        payload: item as Record<string, unknown>,
+        baseVersion,
+        timestamp: createTimestamp()
+      });
+    }
+  });
+
+  previousMap.forEach((_item, id) => {
+    if (nextMap.has(id)) return;
+    operations.push({
+      id: `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      entityType,
+      entityId: id,
+      changeType: 'delete',
+      baseVersion,
+      timestamp: createTimestamp()
+    });
+  });
+
+  return operations;
+};
+
+const buildDiffOperations = (previous: PlannerSnapshot | null, next: PlannerSnapshot): SyncOperation[] => {
+  if (!previous) return [];
+  const baseVersion = previous.version ?? 0;
+  const operations: SyncOperation[] = [];
+  let counter = 0;
+  const createTimestamp = () => new Date(Date.now() + counter++).toISOString();
+  COLLECTION_KEYS.forEach((key) => {
+    const prevCollection = previous[key as CollectionKey] as unknown as { id?: string | number }[];
+    const nextCollection = next[key as CollectionKey] as unknown as { id?: string | number }[];
+    operations.push(
+      ...diffCollection(prevCollection ?? [], nextCollection ?? [], key as SyncOperation['entityType'], baseVersion, createTimestamp)
+    );
+  });
+  return operations;
+};
+
+const snapshotFromState = (state: PlannerState): PlannerSnapshot => ({
+  version: state.version,
+  updatedAt: state.updatedAt,
+  tasks: state.tasks,
+  goals: state.goals,
+  events: state.events,
+  marks: state.marks,
+  notes: state.notes,
+  categories: state.categories
+});
+
 const initialState: PlannerState = {
   ready: false,
+  version: 0,
+  updatedAt: null,
   tasks: [],
   goals: [],
   events: [],
@@ -147,18 +277,23 @@ const synchronizeGoalsWithTasks = (goals: Goal[], tasks: Task[]): Goal[] => {
 const reducer = (state: PlannerState, action: Action): PlannerState => {
   switch (action.type) {
     case 'HYDRATE':
-      const alignedTasks = alignTaskCategories(action.payload.tasks, action.payload.categories);
-      const alignedGoals = alignGoalCategories(action.payload.goals, action.payload.categories);
+      const normalized = normalizeSnapshot(action.payload);
+      const alignedTasks = alignTaskCategories(normalized.tasks, normalized.categories);
+      const alignedGoals = alignGoalCategories(normalized.goals, normalized.categories);
       return {
         ...state,
         ready: true,
+        version: normalized.version,
+        updatedAt: normalized.updatedAt ?? null,
         tasks: alignedTasks,
         goals: synchronizeGoalsWithTasks(alignedGoals, alignedTasks),
-        events: action.payload.events,
-        marks: action.payload.marks,
-        notes: action.payload.notes,
-        categories: action.payload.categories
+        events: normalized.events,
+        marks: normalized.marks,
+        notes: normalized.notes,
+        categories: normalized.categories
       };
+    case 'SET_META':
+      return { ...state, version: action.payload.version, updatedAt: action.payload.updatedAt };
     case 'SET_SECTION':
       return { ...state, activeSection: action.payload };
     case 'SET_DATE':
@@ -251,6 +386,72 @@ const reducer = (state: PlannerState, action: Action): PlannerState => {
 export const usePlannerStore = () => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const { token } = useAuth();
+  const { isOnline } = useNetworkStatus();
+  const prevSnapshotRef = useRef<PlannerSnapshot | null>(null);
+  const skipDiffRef = useRef(false);
+  const queueRef = useRef<SyncOperation[]>([]);
+  const processingRef = useRef(false);
+  const [queueRevision, setQueueRevision] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+
+  const persistQueue = useCallback(async (operations: SyncOperation[]) => {
+    const sorted = sortOperations(operations);
+    queueRef.current = sorted;
+    try {
+      await replaceQueue(sorted);
+    } catch (error) {
+      console.warn('Erro ao salvar fila local', error);
+    }
+    setQueueRevision((revision) => revision + 1);
+  }, []);
+
+  const appendOperations = useCallback(
+    async (operations: SyncOperation[]) => {
+      if (!operations.length) return;
+      const nextQueue = [...queueRef.current, ...operations];
+      await persistQueue(nextQueue);
+    },
+    [persistQueue]
+  );
+
+  const dropOperations = useCallback(
+    async (operationIds: string[]) => {
+      if (!operationIds.length) return;
+      const remaining = queueRef.current.filter((operation) => !operationIds.includes(operation.id));
+      await persistQueue(remaining);
+    },
+    [persistQueue]
+  );
+
+  const applyHydration = useCallback(
+    (snapshot: PlannerSnapshot) => {
+      const normalized = normalizeSnapshot(snapshot);
+      skipDiffRef.current = true;
+      prevSnapshotRef.current = normalized;
+      dispatch({ type: 'HYDRATE', payload: normalized });
+    },
+    [dispatch]
+  );
+
+  const currentSnapshot = useMemo(
+    () => snapshotFromState(state),
+    [state.version, state.updatedAt, state.tasks, state.goals, state.events, state.marks, state.notes, state.categories]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const storedQueue = await loadSyncQueue();
+      if (!mounted) return;
+      queueRef.current = storedQueue;
+      setQueueRevision((revision) => revision + 1);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -275,48 +476,103 @@ export const usePlannerStore = () => {
 
       if (!mounted) return;
 
-      const normalized = normalizeSnapshot(resolved);
-      dispatch({
-        type: 'HYDRATE',
-        payload: {
-          tasks: normalized.tasks,
-          goals: normalized.goals,
-          events: normalized.events,
-          marks: normalized.marks,
-          notes: normalized.notes,
-          categories: normalized.categories.length ? normalized.categories : defaultCategories
-        }
-      });
+      applyHydration(resolved);
     })();
     return () => {
       mounted = false;
     };
-  }, [token]);
+  }, [token, applyHydration]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const storedQueue = await loadSyncQueue();
+      if (!mounted) return;
+      queueRef.current = storedQueue;
+      setQueueRevision((revision) => revision + 1);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!state.ready) return;
-    const snapshot: PlannerSnapshot = {
-      tasks: state.tasks,
-      goals: state.goals,
-      events: state.events,
-      marks: state.marks,
-      notes: state.notes,
-      categories: state.categories
-    };
+    void persistPlannerSnapshot(currentSnapshot);
+  }, [state.ready, currentSnapshot]);
 
-    void persistPlannerSnapshot(snapshot);
-
-    if (token) {
-      void persistPlannerSnapshotRemote(token, snapshot);
+  useEffect(() => {
+    if (!state.ready) return;
+    const previous = prevSnapshotRef.current;
+    if (!previous || skipDiffRef.current) {
+      prevSnapshotRef.current = currentSnapshot;
+      if (skipDiffRef.current) {
+        skipDiffRef.current = false;
+      }
+      return;
     }
-  }, [state.ready, state.tasks, state.goals, state.events, state.marks, state.notes, state.categories, token]);
+    const operations = buildDiffOperations(previous, currentSnapshot);
+    if (operations.length) {
+      void appendOperations(operations);
+    }
+    prevSnapshotRef.current = currentSnapshot;
+  }, [state.ready, currentSnapshot, appendOperations]);
+
+  const processQueue = useCallback(async () => {
+    if (!token || !state.ready || !isOnline) return;
+    if (!queueRef.current.length) return;
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setSyncing(true);
+    try {
+      const result = await syncPlannerOperations(token, {
+        clientVersion: state.version,
+        operations: queueRef.current
+      });
+      if (result.appliedOperations.length) {
+        await dropOperations(result.appliedOperations);
+      }
+      if (result.conflicts.length) {
+        await dropOperations(result.conflicts.map((conflict) => conflict.operationId));
+        console.warn('Operações com conflito removidas', result.conflicts);
+        setLastSyncError('Algumas alterações foram descartadas por conflito.');
+      } else {
+        setLastSyncError(null);
+      }
+      await persistPlannerSnapshot(result.snapshot);
+      applyHydration(result.snapshot);
+      setLastSyncAt(new Date().toISOString());
+    } catch (error) {
+      if (error instanceof PlannerSyncConflict) {
+        await persistPlannerSnapshot(error.serverSnapshot);
+        await clearSyncQueue();
+        queueRef.current = [];
+        setQueueRevision((revision) => revision + 1);
+        applyHydration(error.serverSnapshot);
+        setLastSyncAt(new Date().toISOString());
+        setLastSyncError('Detectamos dados mais recentes no servidor e recarregamos sua visão.');
+      } else {
+        console.warn('Fila aguardando conectividade', error);
+        setLastSyncError(error instanceof Error ? error.message : 'Falha ao sincronizar. Tente novamente em instantes.');
+      }
+    } finally {
+      processingRef.current = false;
+      setSyncing(false);
+    }
+  }, [token, state.ready, state.version, dropOperations, applyHydration, isOnline]);
+
+  useEffect(() => {
+    if (!token || !state.ready || !isOnline) return;
+    if (!queueRef.current.length) return;
+    void processQueue();
+  }, [token, state.ready, isOnline, queueRevision, processQueue]);
+
+  const syncNow = useCallback(async () => {
+    await processQueue();
+  }, [processQueue]);
 
   const filteredTasks = useMemo(() => filterTasks(state.tasks, state.filter), [state.tasks, state.filter]);
   const taskInsights = useMemo(() => getTaskInsights(state.tasks), [state.tasks]);
-  const plannerInsights = useMemo(
-    () => computePlannerInsights(state.tasks, state.goals, state.events, state.notes),
-    [state.tasks, state.goals, state.events, state.notes]
-  );
   const calendarMatrix = useMemo(
     () => buildCalendarMatrix(toReferenceDate(state.activeDate), state.events, state.marks),
     [state.activeDate, state.events, state.marks]
@@ -378,18 +634,7 @@ export const usePlannerStore = () => {
   const addNote = (payload: Parameters<typeof createNote>[0]) => dispatch({ type: 'ADD_NOTE', payload: createNote(payload) });
   const updateNote = (note: PlannerNote) => dispatch({ type: 'UPDATE_NOTE', payload: { ...note, updatedAt: new Date().toISOString() } });
   const deleteNote = (id: PlannerNote['id']) => dispatch({ type: 'DELETE_NOTE', payload: { id } });
-  const hydrateSnapshot = (snapshot: PlannerSnapshot) =>
-    dispatch({
-      type: 'HYDRATE',
-      payload: {
-        tasks: snapshot.tasks ?? [],
-        goals: snapshot.goals ?? [],
-        events: snapshot.events ?? [],
-        marks: snapshot.marks ?? [],
-        notes: snapshot.notes ?? [],
-        categories: snapshot.categories ?? defaultCategories
-      }
-    });
+  const hydrateSnapshot = (snapshot: PlannerSnapshot) => applyHydration(snapshot);
 
   const addCategory = (name: string, color: string): boolean => {
     const trimmedName = name.trim();
@@ -423,9 +668,26 @@ export const usePlannerStore = () => {
   const setSection = (section: PlannerSection) => dispatch({ type: 'SET_SECTION', payload: section });
   const setActiveDate = (iso: string) => dispatch({ type: 'SET_DATE', payload: normalizeDayKey(iso) });
 
+  const queueSize = useMemo(() => queueRef.current.length, [queueRevision]);
+
+  const syncStatus: SyncStatus = useMemo(
+    () => ({
+      queueSize,
+      syncing,
+      lastSyncAt,
+      lastSyncError,
+      isOnline,
+      requiresAuth: !token,
+      canRetry: Boolean(token && isOnline && queueSize > 0 && !syncing)
+    }),
+    [queueSize, syncing, lastSyncAt, lastSyncError, isOnline, token]
+  );
+
   return {
     ready: state.ready,
     state,
+    version: state.version,
+    updatedAt: state.updatedAt,
     tasks: state.tasks,
     goals: state.goals,
     events: state.events,
@@ -436,7 +698,6 @@ export const usePlannerStore = () => {
     filter: state.filter,
     calendarMatrix,
     agendaByDate,
-    plannerInsights,
     taskInsights,
     activeSection: state.activeSection,
     activeDate: state.activeDate,
@@ -465,6 +726,8 @@ export const usePlannerStore = () => {
     canDeleteCategory,
     setFilter,
     setSection,
-    setActiveDate
+    setActiveDate,
+    syncStatus,
+    syncNow
   };
 };

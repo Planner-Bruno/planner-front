@@ -8,6 +8,7 @@ Aplicativo Expo/React Native pensado para organizar tarefas pessoais e profissio
 - Pesquisa, filtro por status e janela de datas (hoje, 7 dias, todas)
 - Cadastro rápido via folha modal com validação simples de prazo
 - Persistência local com AsyncStorage + bootstrapping de tarefas demo
+- Painel de insights analíticos (aba “Insights”) abastecido pelo endpoint `/planner/insights/overview`
 - Regras utilitárias testadas com Vitest e linter configurado para TypeScript/React Native
 
 ## Stack

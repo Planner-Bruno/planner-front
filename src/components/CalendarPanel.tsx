@@ -1,7 +1,7 @@
 import { addMonths, format, subMonths } from 'date-fns';
 import ptBR from 'date-fns/locale/pt-BR';
 import { useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import type { CalendarMark, ScheduleEvent } from '@/types/planner';
 import type { CalendarDay, AgendaBucket } from '@/utils/plannerUtils';
 import { extractDayKey } from '@/utils/plannerUtils';
@@ -311,9 +311,16 @@ const createStyles = (colors: Palette) =>
     },
     daySelected: {
       borderColor: colors.primary,
-      shadowColor: colors.primary,
-      shadowOpacity: 0.3,
-      shadowRadius: 10
+      ...Platform.select({
+        web: {
+          boxShadow: `0 8px 18px ${colors.primary}55`
+        },
+        default: {
+          shadowColor: colors.primary,
+          shadowOpacity: 0.3,
+          shadowRadius: 10
+        }
+      })
     },
     dayLabel: {
       color: colors.text,

@@ -29,6 +29,7 @@ export interface Goal {
   dueDate?: string;
   tags?: string[];
   progress: number; // 0-1
+  priority?: Task['priority'];
   milestones: Milestone[];
   linkedTasks: Task['id'][];
 }
@@ -67,26 +68,6 @@ export interface PlannerNote {
   updatedAt: string;
 }
 
-export interface PlannerInsights {
-  completedTasks: number;
-  weeklyFocusHours: number;
-  goalMomentum: number;
-  nextMilestone?: Milestone;
-  activeGoals: number;
-  goalHighlights: GoalHighlight[];
-}
 
-export interface GoalHighlight {
-  id: Goal['id'];
-  title: string;
-  color: string;
-  progress: number;
-  completedTasks: number;
-  totalTasks: number;
-  eventCount: number;
-  nextEventLabel?: string;
-  noteCount: number;
-  latestNoteTitle?: string;
-}
 
 export type PlannerSection = 'tasks' | 'goals' | 'calendar' | 'insights' | 'notes';

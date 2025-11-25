@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useColors } from '@/theme/ThemeProvider';
 import { isDesktopApp } from '@/utils/platform';
 import { DesktopTitleBar } from '@/components/DesktopTitleBar';
@@ -36,10 +36,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
-    shadowColor: '#000000',
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 16 }
+    ...Platform.select({
+      web: {
+        boxShadow: '0 32px 48px rgba(0, 0, 0, 0.35)'
+      },
+      default: {
+        shadowColor: '#000000',
+        shadowOpacity: 0.45,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 16 }
+      }
+    })
   },
   windowContent: {
     flex: 1

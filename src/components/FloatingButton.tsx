@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 import type { Palette } from '@/theme/colors';
 import { useThemedStyles } from '@/theme/useThemedStyles';
 
@@ -26,11 +26,18 @@ const createStyles = (colors: Palette) =>
       borderRadius: 999,
       paddingHorizontal: 28,
       paddingVertical: 16,
-      shadowColor: colors.accent,
-      shadowOpacity: 0.4,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 6
+      elevation: 6,
+      ...Platform.select({
+        web: {
+          boxShadow: '0 14px 26px rgba(0, 0, 0, 0.25)'
+        },
+        default: {
+          shadowColor: colors.accent,
+          shadowOpacity: 0.4,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 8 }
+        }
+      })
     },
     label: {
       color: colors.background,
