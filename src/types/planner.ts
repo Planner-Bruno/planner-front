@@ -70,4 +70,4 @@ export interface PlannerNote {
 
 
 
-export type PlannerSection = 'tasks' | 'goals' | 'calendar' | 'insights' | 'notes';
+export type PlannerSection = 'tasks' | 'goals' | 'calendar' | 'insights' | 'notes' | 'finance';

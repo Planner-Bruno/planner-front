@@ -1,0 +1,88 @@
+diff --git a/node_modules/react-native-web/dist/cjs/exports/TouchableWithoutFeedback/index.js b/node_modules/react-native-web/dist/cjs/exports/TouchableWithoutFeedback/index.js
+index e570000..9e11f0a 100644
+--- a/node_modules/react-native-web/dist/cjs/exports/TouchableWithoutFeedback/index.js
++++ b/node_modules/react-native-web/dist/cjs/exports/TouchableWithoutFeedback/index.js
+@@ -68,7 +68,8 @@ function TouchableWithoutFeedback(props, forwardedRef) {
+   var supportedProps = pickProps(props);
+   supportedProps.accessibilityDisabled = disabled;
+   supportedProps.focusable = !disabled && focusable !== false;
+-  supportedProps.ref = (0, _useMergeRefs.default)(forwardedRef, hostRef, element.ref);
++  var childRef = element && typeof element === 'object' && element.props ? element.props.ref : null;
++  supportedProps.ref = (0, _useMergeRefs.default)(forwardedRef, hostRef, childRef);
+   var elementProps = Object.assign(supportedProps, pressEventHandlers);
+   return /*#__PURE__*/React.cloneElement(element, elementProps, ...children);
+ }
+diff --git a/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js b/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
+index d643013..4db86df 100644
+--- a/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
++++ b/node_modules/react-native-web/dist/cjs/modules/createDOMProps/index.js
+@@ -805,9 +805,6 @@ var createDOMProps = (elementType, props, options) => {
+   }
+ 
+   // Resolve styles
+-  if (pointerEvents != null) {
+-    (0, _warnOnce.warnOnce)('pointerEvents', "props.pointerEvents is deprecated. Use style.pointerEvents");
+-  }
+   var _StyleSheet = (0, _StyleSheet2.default)([style, pointerEvents && pointerEventsStyles[pointerEvents]], (0, _objectSpread2.default)({
+       writingDirection: 'ltr'
+     }, options)),
+diff --git a/node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js b/node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js
+index 656e8d9..010815d 100644
+--- a/node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js
++++ b/node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js
+@@ -63,7 +63,8 @@ function TouchableWithoutFeedback(props, forwardedRef) {
+   var supportedProps = pickProps(props);
+   supportedProps.accessibilityDisabled = disabled;
+   supportedProps.focusable = !disabled && focusable !== false;
+-  supportedProps.ref = useMergeRefs(forwardedRef, hostRef, element.ref);
++  var childRef = element && typeof element === 'object' && element.props ? element.props.ref : null;
++  supportedProps.ref = useMergeRefs(forwardedRef, hostRef, childRef);
+   var elementProps = Object.assign(supportedProps, pressEventHandlers);
+   return /*#__PURE__*/React.cloneElement(element, elementProps, ...children);
+ }
+diff --git a/node_modules/react-native-web/dist/modules/createDOMProps/index.js b/node_modules/react-native-web/dist/modules/createDOMProps/index.js
+index 18f5e8b..9d4e907 100644
+--- a/node_modules/react-native-web/dist/modules/createDOMProps/index.js
++++ b/node_modules/react-native-web/dist/modules/createDOMProps/index.js
+@@ -801,9 +801,6 @@ var createDOMProps = (elementType, props, options) => {
+   }
+ 
+   // Resolve styles
+-  if (pointerEvents != null) {
+-    warnOnce('pointerEvents', "props.pointerEvents is deprecated. Use style.pointerEvents");
+-  }
+   var _StyleSheet = StyleSheet([style, pointerEvents && pointerEventsStyles[pointerEvents]], _objectSpread({
+       writingDirection: 'ltr'
+     }, options)),
+diff --git a/node_modules/react-native-web/src/exports/TouchableWithoutFeedback/index.js b/node_modules/react-native-web/src/exports/TouchableWithoutFeedback/index.js
+index e2ef7d0..f3c6fea 100644
+--- a/node_modules/react-native-web/src/exports/TouchableWithoutFeedback/index.js
++++ b/node_modules/react-native-web/src/exports/TouchableWithoutFeedback/index.js
+@@ -114,7 +114,8 @@ function TouchableWithoutFeedback(props: Props, forwardedRef): React.Node {
+   const supportedProps = pickProps(props);
+   supportedProps.accessibilityDisabled = disabled;
+   supportedProps.focusable = !disabled && focusable !== false;
+-  supportedProps.ref = useMergeRefs(forwardedRef, hostRef, element.ref);
++  const childRef = element && typeof element === 'object' && element.props ? element.props.ref : null;
++  supportedProps.ref = useMergeRefs(forwardedRef, hostRef, childRef);
+ 
+   const elementProps = Object.assign(supportedProps, pressEventHandlers);
+ 
+diff --git a/node_modules/react-native-web/src/modules/createDOMProps/index.js b/node_modules/react-native-web/src/modules/createDOMProps/index.js
+index 4144dbc..a0c44c5 100644
+--- a/node_modules/react-native-web/src/modules/createDOMProps/index.js
++++ b/node_modules/react-native-web/src/modules/createDOMProps/index.js
+@@ -873,13 +873,6 @@ const createDOMProps = (elementType, props, options) => {
+   }
+ 
+   // Resolve styles
+-  if (pointerEvents != null) {
+-    warnOnce(
+-      'pointerEvents',
+-      `props.pointerEvents is deprecated. Use style.pointerEvents`
+-    );
+-  }
+-
+   const [className, inlineStyle] = StyleSheet(
+     [style, pointerEvents && pointerEventsStyles[pointerEvents]],
+     {

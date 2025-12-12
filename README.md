@@ -33,6 +33,22 @@ npm run start
 
 Durante o `npm run start`, escolha `w` para rodar no navegador, `a` para Android ou `i` para iOS. Para build nativa utilize `expo run:android` ou `expo run:ios` após configurar os toolchains. Para garantir que dispositivos na mesma rede enxerguem o backend, mantenha o Expo em modo **LAN** (menu `?` → `LAN` ou `npx expo start --host lan`).
 
+### Script rápido para dev local (Windows)
+Em vez de abrir dois terminais manualmente, rode `pwsh ../scripts/dev-local.ps1` a partir da pasta `frontend` (ou `scripts/dev-local.ps1` via Explorer). O script:
+- inicializa o backend em `http://0.0.0.0:8000` (usando `backend/.venv` se existir);
+- abre o Expo em outra janela (padrão modo nativo; use `-Client web` ou `-Client webLan` para web);
+- aceita `-SkipBackend` caso queira somente o frontend.
+
+Exemplos:
+
+```powershell
+# Expo web no modo LAN + backend local
+pwsh ..\scripts\dev-local.ps1 -Client webLan
+
+# Apenas backend (por exemplo, se o Expo já estiver rodando)
+pwsh ..\scripts\dev-local.ps1 -SkipBackend
+```
+
 ### Testar no celular (mesmo Wi-Fi)
 1. Descubra o IP local do computador (`ipconfig` no Windows) e atualize o valor de `EXPO_PUBLIC_API_BASE_URL` (ou `EXPO_PUBLIC_API_URL`) no arquivo `.env` (ex.: `http://192.168.0.15:8000`).
 2. Inicie o backend com `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (veja README do backend para liberar o firewall e configurar `CORS_ALLOWED_ORIGINS`).

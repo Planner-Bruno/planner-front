@@ -133,30 +133,13 @@ const matchesQuery = (task: Task, query: string): boolean => {
 };
 
 export const filterTasks = (tasks: Task[], filter: TaskFilter, now = new Date()): Task[] =>
-  tasks
-    .filter(
-      (task) =>
-        matchesStatus(task, filter.status) &&
-        matchesCategory(task, filter.category) &&
-        matchesRange(task, filter.range, now) &&
-        matchesQuery(task, filter.query)
-    )
-    .sort((a, b) => {
-      if (a.status === b.status) {
-        if (a.dueDate && b.dueDate) {
-          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-        }
-        if (a.dueDate) return -1;
-        if (b.dueDate) return 1;
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      }
-      const order: Record<Task['status'], number> = {
-        backlog: 0,
-        in_progress: 1,
-        done: 2
-      };
-      return order[a.status] - order[b.status];
-    });
+  tasks.filter(
+    (task) =>
+      matchesStatus(task, filter.status) &&
+      matchesCategory(task, filter.category) &&
+      matchesRange(task, filter.range, now) &&
+      matchesQuery(task, filter.query)
+  );
 
 export const getDefaultFilter = (): TaskFilter => ({
   status: 'all',

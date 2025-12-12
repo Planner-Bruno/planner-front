@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AUTH_STORAGE_KEY, API_BASE_URL } from '@/config/api';
 import { resetPlannerSnapshot } from '@/storage/plannerStorage';
+import { clearSyncQueue } from '@/storage/syncQueue';
 
 interface UserProfile {
   email: string;
@@ -89,7 +90,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setToken(null);
     setUser(null);
     await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
-    await resetPlannerSnapshot();
+    await Promise.all([resetPlannerSnapshot(), clearSyncQueue()]);
   }, []);
 
   const value: AuthContextValue = {

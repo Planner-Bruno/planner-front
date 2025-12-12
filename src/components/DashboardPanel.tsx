@@ -21,7 +21,7 @@ export const DashboardPanel = ({ plannerInsights, taskInsights }: Props) => {
   return (
     <View style={styles.container}>
       <View style={styles.cardRow}>
-        <InsightCard label="Objetivos ativos" value={`${plannerInsights.activeGoals}`} accent="#818cf8" styles={styles} />
+        <InsightCard label="Metas ativas" value={`${plannerInsights.activeGoals}`} accent="#818cf8" styles={styles} />
         <InsightCard label="Tarefas concluídas" value={`${taskInsights.completed}`} accent="#22d3ee" styles={styles} />
         <InsightCard label="Horas focadas (semana)" value={`${plannerInsights.weeklyFocusHours}h`} accent="#f472b6" styles={styles} />
         <InsightCard label="Momentum de metas" value={`${Math.round(plannerInsights.goalMomentum * 100)}%`} accent="#34d399" styles={styles} />
@@ -42,7 +42,7 @@ export const DashboardPanel = ({ plannerInsights, taskInsights }: Props) => {
         )}
       </View>
       <View style={styles.goalOverview}>
-        <Text style={styles.sectionTitle}>Panorama de objetivos</Text>
+        <Text style={styles.sectionTitle}>Panorama de metas</Text>
         {plannerInsights.goalHighlights.length ? (
           plannerInsights.goalHighlights.map((highlight) => (
             <View key={highlight.id} style={styles.goalRow}>
@@ -70,7 +70,7 @@ export const DashboardPanel = ({ plannerInsights, taskInsights }: Props) => {
             </View>
           ))
         ) : (
-          <Text style={styles.milestoneMeta}>Vincule tarefas aos objetivos para visualizar este panorama.</Text>
+          <Text style={styles.milestoneMeta}>Vincule tarefas às metas para visualizar este panorama.</Text>
         )}
       </View>
     </View>

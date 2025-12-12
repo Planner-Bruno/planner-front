@@ -6,13 +6,14 @@ import { useColors } from '@/theme/ThemeProvider';
 
 const labels: Record<PlannerSection, string> = {
   tasks: 'Tarefas',
-  goals: 'Objetivos',
+  goals: 'Metas',
   calendar: 'Calendário',
   insights: 'Dashboard',
-  notes: 'Notas'
+  notes: 'Notas',
+  finance: 'Finanças'
 };
 
-const sectionOrder: PlannerSection[] = ['goals', 'tasks', 'calendar', 'insights', 'notes'];
+const sectionOrder: PlannerSection[] = ['goals', 'tasks', 'calendar', 'insights', 'notes', 'finance'];
 interface Props {
   value: PlannerSection;
   onChange(section: PlannerSection): void;

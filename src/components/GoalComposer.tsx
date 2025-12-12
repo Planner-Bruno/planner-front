@@ -149,7 +149,7 @@ export const GoalComposer = ({
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheet}>
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
             <View style={styles.header}>
-              <Text style={styles.title}>{isEditing ? 'Editar objetivo' : 'Novo objetivo'}</Text>
+              <Text style={styles.title}>{isEditing ? 'Editar meta' : 'Nova meta'}</Text>
               <Pressable style={styles.closeButton} onPress={onClose} accessibilityRole="button">
                 <Text style={styles.closeLabel}>×</Text>
               </Pressable>

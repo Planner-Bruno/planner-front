@@ -1,6 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type PlannerEntityType = 'tasks' | 'goals' | 'events' | 'marks' | 'notes' | 'categories';
+export type PlannerEntityType =
+  | 'tasks'
+  | 'goals'
+  | 'events'
+  | 'marks'
+  | 'notes'
+  | 'categories'
+  | 'finance.wallets'
+  | 'finance.transactions'
+  | 'finance.budgets'
+  | 'finance.goals'
+  | 'finance.recurring_rules'
+  | 'finance.categories';
 export type PlannerChangeType = 'create' | 'update' | 'delete';
 
 export interface SyncOperation {

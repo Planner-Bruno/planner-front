@@ -1,11 +1,13 @@
 import { format } from 'date-fns';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, StyleProp, Text, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Alert, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, StyleProp, Text, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import DraggableFlatList from 'react-native-draggable-flatlist';
 import type { CalendarMark, Goal, PlannerNote, ScheduleEvent, ScheduleEventKind } from '@/types/planner';
+import type { PlannerInsightsOverview } from '@/services/insightsApi';
 import type { Task, TaskSubtask } from '@/types/task';
 import { CalendarPanel } from '@/components/CalendarPanel';
 import { EmptyState } from '@/components/EmptyState';
@@ -23,12 +25,13 @@ import { StatsStrip } from '@/components/StatsStrip';
 import { TaskCard } from '@/components/TaskCard';
 import { TaskComposer } from '@/components/TaskComposer';
 import { InsightsPanel } from '@/components/InsightsPanel';
+import { FinancePanel } from '@/components/FinancePanel';
 import { usePlannerStore } from '@/state/usePlannerStore';
 import { useInsights } from '@/state/useInsights';
 import { useAuth } from '@/state/AuthContext';
 import type { Palette } from '@/theme/colors';
 import { useColors, useThemeMode } from '@/theme/ThemeProvider';
-import type { PlannerSnapshot } from '@/storage/plannerStorage';
+import { ensureFinanceSnapshot, type PlannerSnapshot } from '@/storage/plannerStorage';
 import { extractDayKey } from '@/utils/plannerUtils';
 import { normalizeDateInput } from '@/utils/dateUtils';
 import { makeSubtask } from '@/utils/taskUtils';
@@ -74,6 +77,108 @@ type NoteFormPayload = {
   color?: string;
   tags?: string[];
   goalId?: string | null;
+};
+
+const toStartOfDay = (input: Date) => {
+  const copy = new Date(input);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+};
+
+const parseDateValue = (value?: string | null): Date | null => {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  return new Date(timestamp);
+};
+
+const addDays = (base: Date, amount: number) => {
+  const copy = new Date(base);
+  copy.setDate(copy.getDate() + amount);
+  return copy;
+};
+
+const buildLocalInsights = (tasks: Task[], goals: Goal[], events: ScheduleEvent[], notes: PlannerNote[]): PlannerInsightsOverview => {
+  const today = toStartOfDay(new Date());
+  const withinWeek = addDays(today, 7);
+
+  let backlog = 0;
+  let inProgress = 0;
+  let done = 0;
+  let overdue = 0;
+  let dueToday = 0;
+
+  tasks.forEach((task) => {
+    const status = (task.status ?? '').toLowerCase();
+    if (status === 'in_progress') {
+      inProgress += 1;
+    } else if (status === 'done') {
+      done += 1;
+    } else {
+      backlog += 1;
+    }
+
+    const dueValue = (task as Record<string, string | null | undefined>).dueDate ?? (task as Record<string, string | null | undefined>).due_date;
+    const dueDate = parseDateValue(dueValue ?? undefined);
+    if (!dueDate) return;
+    const dueDay = toStartOfDay(dueDate);
+    if (status !== 'done' && dueDay < today) {
+      overdue += 1;
+    }
+    if (dueDay.getTime() === today.getTime()) {
+      dueToday += 1;
+    }
+  });
+
+  let completedGoals = 0;
+  goals.forEach((goal) => {
+    const progress = typeof goal.progress === 'number' ? goal.progress : 0;
+    const status = (goal.status ?? '').toLowerCase();
+    if (status === 'done' || progress >= 1) {
+      completedGoals += 1;
+    }
+  });
+  const activeGoals = Math.max(goals.length - completedGoals, 0);
+
+  let upcomingEvents = 0;
+  let todayEvents = 0;
+  events.forEach((event) => {
+    const dateValue =
+      (event as Record<string, string | null | undefined>).date ??
+      (event as Record<string, string | null | undefined>).startDate ??
+      (event as Record<string, string | null | undefined>).start_date;
+    const eventDate = parseDateValue(dateValue ?? undefined);
+    if (!eventDate) return;
+    const day = toStartOfDay(eventDate);
+    if (day >= today && day <= withinWeek) {
+      upcomingEvents += 1;
+    }
+    if (day.getTime() === today.getTime()) {
+      todayEvents += 1;
+    }
+  });
+
+  return {
+    tasks: {
+      total: tasks.length,
+      backlog,
+      in_progress: inProgress,
+      done,
+      overdue,
+      due_today: dueToday
+    },
+    goals: {
+      total: goals.length,
+      completed: completedGoals,
+      active: activeGoals
+    },
+    events: {
+      total: events.length,
+      upcoming_7d: upcomingEvents,
+      today: todayEvents
+    },
+    notes: notes.length
+  };
 };
 
 type TaskFormPayload = {
@@ -132,6 +237,7 @@ export const HomeScreen = () => {
     agendaByDate,
     notes,
     categories,
+    finance,
     categoryUsage,
     activeDate,
     setActiveDate,
@@ -140,9 +246,11 @@ export const HomeScreen = () => {
     deleteTask,
     toggleTask,
     advanceTask,
+    reorderTasks,
     addGoal,
     updateGoal,
     deleteGoal,
+    reorderGoals,
     addEvent,
     updateEvent,
     deleteEvent,
@@ -206,6 +314,21 @@ export const HomeScreen = () => {
     [notes]
   );
 
+  const taskGroups = useMemo(() => {
+    if (!filteredTasks.length) return [];
+    const order: string[] = [];
+    const groups: Record<string, { key: string; goalId: string | null; tasks: Task[] }> = {};
+    filteredTasks.forEach((task) => {
+      const key = `goal:${task.goalId ?? 'sem-meta'}`;
+      if (!groups[key]) {
+        groups[key] = { key, goalId: task.goalId ?? null, tasks: [] };
+        order.push(key);
+      }
+      groups[key]!.tasks.push(task);
+    });
+    return order.map((key) => groups[key]!);
+  }, [filteredTasks, colors]);
+
   const [taskComposerVisible, setTaskComposerVisible] = useState(false);
   const [goalComposerVisible, setGoalComposerVisible] = useState(false);
   const [eventComposerVisible, setEventComposerVisible] = useState(false);
@@ -221,6 +344,7 @@ export const HomeScreen = () => {
   const [eventDate, setEventDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const heading = useMemo(() => {
     const hours = new Date().getHours();
@@ -231,6 +355,57 @@ export const HomeScreen = () => {
 
   const dayKey = extractDayKey(activeDate);
   const agendaForDay = agendaByDate[dayKey] ?? { events: [], reminders: [], marks: [] };
+
+  const localInsights = useMemo(() => buildLocalInsights(tasks, goals, events, notes), [tasks, goals, events, notes]);
+
+  const insightsData = useMemo(() => {
+    if (syncStatus.queueSize > 0 || syncStatus.syncing) return localInsights;
+    if (!insightsOverview) return localInsights;
+    const matchesRemote =
+      insightsOverview.tasks.total === localInsights.tasks.total &&
+      insightsOverview.goals.total === localInsights.goals.total &&
+      insightsOverview.events.total === localInsights.events.total &&
+      insightsOverview.notes === localInsights.notes;
+    return matchesRemote ? insightsOverview : localInsights;
+  }, [syncStatus.queueSize, syncStatus.syncing, insightsOverview, localInsights]);
+
+  useEffect(() => {
+    if (!syncStatus.lastSyncAt || syncStatus.queueSize > 0 || syncStatus.syncing) return;
+    void refreshInsights();
+  }, [syncStatus.lastSyncAt, syncStatus.queueSize, syncStatus.syncing, refreshInsights]);
+
+  const handleReorderSubtasks = useCallback(
+    (taskId: Task['id'], orderedIds: string[]) => {
+      const task = tasks.find((item) => item.id === taskId);
+      if (!task?.subtasks?.length) return;
+      const subtaskMap = new Map(task.subtasks.map((entry) => [entry.id, entry] as const));
+      const orderedQueue = orderedIds.map((id) => subtaskMap.get(id)).filter(Boolean) as TaskSubtask[];
+      if (!orderedQueue.length) return;
+      const orderedSet = new Set(orderedIds);
+      const queue = [...orderedQueue];
+      const reordered = task.subtasks.map((entry) => {
+        if (!orderedSet.has(entry.id)) return entry;
+        const next = queue.shift();
+        return next ?? entry;
+      });
+      updateTask(taskId, { subtasks: reordered });
+    },
+    [tasks, updateTask]
+  );
+
+  const handleReorderTasks = useCallback(
+    (groupGoalId: string | null, orderedIds: string[]) => {
+      reorderTasks(groupGoalId, orderedIds);
+    },
+    [reorderTasks]
+  );
+
+  const handleReorderGoals = useCallback(
+    (orderedIds: string[]) => {
+      reorderGoals(orderedIds);
+    },
+    [reorderGoals]
+  );
 
   if (!ready) {
     return (
@@ -264,7 +439,8 @@ export const HomeScreen = () => {
     events,
     marks,
     notes,
-    categories
+    categories,
+    finance
   });
 
   const isValidSnapshot = (payload: Partial<PlannerSnapshot>): payload is PlannerSnapshot =>
@@ -273,7 +449,8 @@ export const HomeScreen = () => {
     Array.isArray(payload.goals) &&
     Array.isArray(payload.events) &&
     Array.isArray(payload.marks) &&
-    Array.isArray(payload.notes);
+    Array.isArray(payload.notes) &&
+    (payload.finance === undefined || typeof payload.finance === 'object');
 
   const handleExportBackup = async () => {
     if (isExporting) return;
@@ -348,7 +525,10 @@ export const HomeScreen = () => {
       const contents = await readSnapshotFile(asset);
       const parsed = JSON.parse(contents) as Partial<PlannerSnapshot>;
       if (!isValidSnapshot(parsed)) throw new Error('Formato de backup não reconhecido.');
-      hydrateSnapshot(parsed);
+      hydrateSnapshot({
+        ...parsed,
+        finance: ensureFinanceSnapshot(parsed.finance)
+      });
       Alert.alert('Importação concluída', 'Seus dados foram restaurados com sucesso.');
     } catch (error) {
       if ((error as Error)?.message?.includes('canceled')) return;
@@ -427,6 +607,11 @@ export const HomeScreen = () => {
     updateTask(taskId, { subtasks: remaining.length ? remaining : null });
   };
 
+  const toggleTaskGroupVisibility = (groupKey: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCollapsedGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
+
   const handleGoalSubmit = (payload: GoalFormPayload, editingId?: Goal['id']) => {
     const categoryName = payload.categoryName || 'Sem categoria';
     const normalizedStartDate = normalizeDateInput(payload.startDate) ?? undefined;
@@ -463,7 +648,7 @@ export const HomeScreen = () => {
   };
 
   const requestDeleteGoal = async (goal: Goal) => {
-    if (await confirmRemoval('Excluir objetivo', `Remover "${goal.title}" do planner?`)) {
+    if (await confirmRemoval('Excluir meta', `Remover "${goal.title}" do planner?`)) {
       deleteGoal(goal.id);
     }
   };
@@ -571,22 +756,63 @@ export const HomeScreen = () => {
             <StatsStrip insights={taskInsights} />
             <FilterBar filter={filter} onChange={setFilter} />
             <View style={styles.listWrapper}>
-              {filteredTasks.length ? (
-                filteredTasks.map((task) => {
-                  const relatedGoal = task.goalId ? goalsById[task.goalId] : undefined;
+              {taskGroups.length ? (
+                taskGroups.map((group) => {
+                  const groupGoal = group.goalId ? goalsById[group.goalId] : undefined;
+                  const groupKey = group.key;
+                  const groupTitle = groupGoal?.title ?? (group.goalId ? 'Meta removida' : 'Sem meta');
+                  const indicatorColor = groupGoal?.color ?? colors.border;
+                  const taskCountLabel = group.tasks.length === 1 ? '1 tarefa' : `${group.tasks.length} tarefas`;
+                  const collapsed = !!collapsedGroups[groupKey];
+                  const actionLabel = collapsed ? 'Expandir' : 'Recolher';
                   return (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      onToggle={() => toggleTask(task.id)}
-                      onAdvance={() => advanceTask(task.id)}
-                      onEdit={() => openTaskEditor(task)}
-                      onDelete={() => requestDeleteTask(task)}
-                      onToggleSubtask={(subtaskId) => handleToggleSubtask(task.id, subtaskId)}
-                      onAddSubtask={(title) => handleAddSubtask(task.id, title)}
-                      onRemoveSubtask={(subtaskId) => handleRemoveSubtask(task.id, subtaskId)}
-                      goalMeta={relatedGoal ? { title: relatedGoal.title, color: relatedGoal.color } : undefined}
-                    />
+                    <View key={groupKey} style={styles.taskGroup}>
+                      <Pressable
+                        style={({ pressed }) => [styles.taskGroupHeader, pressed && styles.taskGroupHeaderPressed]}
+                        onPress={() => toggleTaskGroupVisibility(groupKey)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${actionLabel} tarefas da meta ${groupTitle}`}
+                      >
+                        <View style={styles.taskGroupLabelRow}>
+                          <View style={[styles.taskGroupDot, { backgroundColor: indicatorColor }]} />
+                          <Text style={styles.taskGroupTitle}>{groupTitle}</Text>
+                        </View>
+                        <View style={styles.taskGroupMeta}>
+                          <Text style={styles.taskGroupCount}>{taskCountLabel}</Text>
+                          <Text style={styles.taskGroupToggle}>{collapsed ? '+' : '−'}</Text>
+                        </View>
+                      </Pressable>
+                      {!collapsed ? (
+                        <DraggableFlatList
+                          listKey={groupKey}
+                          data={group.tasks}
+                          keyExtractor={(item) => item.id}
+                          scrollEnabled={false}
+                          activationDistance={8}
+                          contentContainerStyle={styles.taskGroupList}
+                          onDragEnd={({ data }) => handleReorderTasks(group.goalId ?? null, data.map((item) => item.id))}
+                          renderItem={({ item, drag, isActive }) => {
+                            const relatedGoal = item.goalId ? goalsById[item.goalId] : undefined;
+                            return (
+                              <TaskCard
+                                task={item}
+                                onToggle={() => toggleTask(item.id)}
+                                onAdvance={() => advanceTask(item.id)}
+                                onEdit={() => openTaskEditor(item)}
+                                onDelete={() => requestDeleteTask(item)}
+                                onToggleSubtask={(subtaskId) => handleToggleSubtask(item.id, subtaskId)}
+                                onAddSubtask={(title) => handleAddSubtask(item.id, title)}
+                                onRemoveSubtask={(subtaskId) => handleRemoveSubtask(item.id, subtaskId)}
+                                onReorderSubtasks={(orderedIds) => handleReorderSubtasks(item.id, orderedIds)}
+                                goalMeta={relatedGoal ? { title: relatedGoal.title, color: relatedGoal.color } : undefined}
+                                onDragStart={drag}
+                                isDragging={isActive}
+                              />
+                            );
+                          }}
+                        />
+                      ) : null}
+                    </View>
                   );
                 })
               ) : (
@@ -598,21 +824,31 @@ export const HomeScreen = () => {
       case 'goals':
         return goals.length ? (
           <View style={styles.sectionGap}>
-            {goals.map((goal) => (
-              <GoalCard
-                key={goal.id}
-                goal={goal}
-                tasks={tasksByGoal[goal.id]}
-                events={eventsByGoal[goal.id]}
-                notes={notesByGoal[goal.id]}
-                onEdit={openGoalEditor}
-                onDelete={requestDeleteGoal}
-              />
-            ))}
+            <DraggableFlatList
+              listKey="goals-list"
+              data={goals}
+              keyExtractor={(goal) => goal.id}
+              scrollEnabled={false}
+              activationDistance={8}
+              contentContainerStyle={styles.goalList}
+              onDragEnd={({ data }) => handleReorderGoals(data.map((goal) => goal.id))}
+              renderItem={({ item, drag, isActive }) => (
+                <GoalCard
+                  goal={item}
+                  tasks={tasksByGoal[item.id]}
+                  events={eventsByGoal[item.id]}
+                  notes={notesByGoal[item.id]}
+                  onEdit={openGoalEditor}
+                  onDelete={requestDeleteGoal}
+                  onDragStart={drag}
+                  isDragging={isActive}
+                />
+              )}
+            />
           </View>
         ) : (
           <EmptyState
-            title="Objetivos vazios"
+            title="Metas vazias"
             description="Construa metas ousadas e acompanhe o progresso em tempo real."
           />
         );
@@ -647,12 +883,14 @@ export const HomeScreen = () => {
       case 'insights':
         return (
           <InsightsPanel
-            overview={insightsOverview}
+            overview={insightsData}
             loading={insightsLoading}
             error={insightsError}
             onRefresh={refreshInsights}
           />
         );
+      case 'finance':
+        return <FinancePanel />;
       default:
         return null;
     }
@@ -747,6 +985,9 @@ export const HomeScreen = () => {
       );
     }
 
+    if (activeSection !== 'insights') {
+      return null;
+    }
     return buildBanner(styles.syncBannerSuccess, 'Tudo sincronizado', 'Nenhuma alteração pendente.', formatTimestamp());
   };
 
@@ -760,10 +1001,11 @@ export const HomeScreen = () => {
         setTaskComposerVisible(true);
       }
     },
-    goals: { label: 'Novo objetivo', action: () => { setEditingGoal(null); setGoalComposerVisible(true); } },
+    goals: { label: 'Nova meta', action: () => { setEditingGoal(null); setGoalComposerVisible(true); } },
     calendar: { label: 'Novo evento', action: () => openEventModal('event', dayKey) },
     insights: null,
-    notes: { label: 'Nova anotação', action: () => openNoteEditor() }
+    notes: { label: 'Nova anotação', action: () => openNoteEditor() },
+    finance: null
   } as const;
   const renderActionButtons = (orientation: 'horizontal' | 'vertical') => {
     const isHorizontal = orientation === 'horizontal';
@@ -1155,6 +1397,59 @@ const createStyles = (colors: Palette) =>
     },
     listWrapper: {
       gap: 16
+    },
+    taskGroup: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 20,
+      padding: 16,
+      backgroundColor: colors.surface,
+      gap: 12
+    },
+    taskGroupHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    taskGroupHeaderPressed: {
+      opacity: 0.75
+    },
+    taskGroupLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8
+    },
+    taskGroupDot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: colors.border
+    },
+    taskGroupTitle: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: colors.text
+    },
+    taskGroupCount: {
+      fontSize: 12,
+      color: colors.textMuted
+    },
+    taskGroupMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8
+    },
+    taskGroupToggle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.textMuted,
+      lineHeight: 18
+    },
+    taskGroupList: {
+      gap: 12
+    },
+    goalList: {
+      gap: 18
     },
     sectionGap: {
       gap: 18

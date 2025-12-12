@@ -2,7 +2,8 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { memo, useEffect, useState } from 'react';
 import { LayoutAnimation, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle, UIManager } from 'react-native';
-import type { Task } from '@/types/task';
+import DraggableFlatList from 'react-native-draggable-flatlist';
+import type { Task, TaskSubtask } from '@/types/task';
 import { isOverdue } from '@/utils/taskUtils';
 import type { Palette } from '@/theme/colors';
 import { priorityColors } from '@/theme/colors';
@@ -23,11 +24,14 @@ interface Props {
   onToggleSubtask?(subtaskId: string): void;
   onAddSubtask?(title: string): void;
   onRemoveSubtask?(subtaskId: string): void;
+  onReorderSubtasks?(orderedIds: string[]): void;
   style?: StyleProp<ViewStyle>;
   goalMeta?: {
     title: string;
     color: string;
   };
+  onDragStart?(): void;
+  isDragging?: boolean;
 }
 
 const statusLabel: Record<Task['status'], string> = {
@@ -53,7 +57,10 @@ const TaskCardComponent = ({
   style,
   onToggleSubtask,
   onAddSubtask,
-  onRemoveSubtask
+  onRemoveSubtask,
+  onReorderSubtasks,
+  onDragStart,
+  isDragging
 }: Props) => {
   const colors = useColors();
   const styles = useThemedStyles(createStyles);
@@ -67,6 +74,34 @@ const TaskCardComponent = ({
   const completedSubtasks = task.subtasks?.filter((subtask) => subtask.completed).length ?? 0;
   const progressPercent = totalSubtasks ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0;
   const canAddSubtask = Boolean(subtaskDraft.trim());
+  const subtasksData = task.subtasks ?? [];
+
+  const renderSubtaskItem = ({ item, drag, isActive }: { item: TaskSubtask; drag: () => void; isActive: boolean }) => (
+    <View style={[styles.subtaskItem, isActive && styles.subtaskItemActive]}>
+      <Pressable
+        style={({ pressed }) => [styles.subtaskDragHandle, (pressed || isActive) && styles.subtaskDragHandlePressed]}
+        onPressIn={drag}
+        onLongPress={drag}
+        hitSlop={6}
+      >
+        <Text style={styles.subtaskGrip}>::</Text>
+      </Pressable>
+      <Pressable
+        style={[styles.subtaskCheckbox, item.completed && styles.subtaskCheckboxChecked]}
+        onPress={() => onToggleSubtask?.(item.id)}
+      >
+        {item.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
+      </Pressable>
+      <Text style={[styles.subtaskLabel, item.completed && styles.subtaskCompleted]} numberOfLines={2}>
+        {item.title}
+      </Text>
+      {onRemoveSubtask ? (
+        <Pressable style={styles.subtaskRemove} onPress={() => onRemoveSubtask(item.id)}>
+          <Text style={styles.subtaskRemoveLabel}>×</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
 
   useEffect(() => {
     setSubtaskDraft('');
@@ -88,7 +123,7 @@ const TaskCardComponent = ({
   const displayProgress = totalSubtasks ? progressPercent : statusProgressFallback[task.status];
 
   return (
-    <View style={[styles.card, expanded && styles.cardExpanded, style]}>
+    <View style={[styles.card, expanded && styles.cardExpanded, isDragging && styles.cardDragging, style]}>
       <View style={styles.headerRow}>
         <Pressable
           accessibilityRole="button"
@@ -108,7 +143,7 @@ const TaskCardComponent = ({
           ) : null}
           {goalMeta ? (
             <View style={styles.goalBreadcrumb}>
-              <Text style={styles.goalBreadcrumbLabel}>Objetivo</Text>
+              <Text style={styles.goalBreadcrumbLabel}>Meta</Text>
               <View style={styles.goalBreadcrumbValueRow}>
                 <View style={[styles.goalBadgeDot, styles.goalBreadcrumbDot, { backgroundColor: goalMeta.color }]} />
                 <Text style={styles.goalBreadcrumbValue} numberOfLines={1}>
@@ -119,6 +154,16 @@ const TaskCardComponent = ({
           ) : null}
         </Pressable>
         <View style={styles.headerControls}>
+          {onDragStart ? (
+            <Pressable
+              style={({ pressed }) => [styles.dragHandle, pressed && styles.dragHandlePressed]}
+              onPressIn={onDragStart}
+              onLongPress={onDragStart}
+              hitSlop={6}
+            >
+              <Text style={styles.dragHandleIcon}>::</Text>
+            </Pressable>
+          ) : null}
           {onEdit ? (
             <Pressable style={styles.headerChip} onPress={onEdit}>
               <Text style={styles.headerChipLabel}>Editar</Text>
@@ -200,26 +245,15 @@ const TaskCardComponent = ({
           {(hasSubtasks || onAddSubtask) ? (
             <View style={styles.subtaskSection}>
               {hasSubtasks ? (
-                <View style={styles.subtaskList}>
-                  {task.subtasks.map((subtask) => (
-                    <View key={subtask.id} style={styles.subtaskItem}>
-                      <Pressable
-                        style={[styles.subtaskCheckbox, subtask.completed && styles.subtaskCheckboxChecked]}
-                        onPress={() => onToggleSubtask?.(subtask.id)}
-                      >
-                        {subtask.completed ? <View style={styles.subtaskCheckboxIndicator} /> : null}
-                      </Pressable>
-                      <Text style={[styles.subtaskLabel, subtask.completed && styles.subtaskCompleted]} numberOfLines={2}>
-                        {subtask.title}
-                      </Text>
-                      {onRemoveSubtask ? (
-                        <Pressable style={styles.subtaskRemove} onPress={() => onRemoveSubtask(subtask.id)}>
-                          <Text style={styles.subtaskRemoveLabel}>×</Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
+                <DraggableFlatList
+                  data={subtasksData}
+                  keyExtractor={(subtask) => subtask.id}
+                  scrollEnabled={false}
+                  activationDistance={6}
+                  onDragEnd={({ data }) => onReorderSubtasks?.(data.map((entry) => entry.id))}
+                  contentContainerStyle={styles.subtaskList}
+                  renderItem={({ item, drag, isActive }) => renderSubtaskItem({ item, drag, isActive })}
+                />
               ) : (
                 <Text style={styles.helperText}>Nenhuma subtarefa cadastrada ainda.</Text>
               )}
@@ -278,7 +312,7 @@ const TaskCardComponent = ({
             </View>
             {goalMeta ? (
               <View style={[styles.collapsedChip, styles.collapsedGoalChip]}>
-                <Text style={styles.collapsedChipLabel}>Objetivo</Text>
+                <Text style={styles.collapsedChipLabel}>Meta</Text>
                 <View style={styles.collapsedChipValueRow}>
                   <View style={[styles.goalBadgeDot, styles.collapsedGoalDot, { backgroundColor: goalMeta.color }]} />
                   <Text style={styles.collapsedChipValue} numberOfLines={1}>
@@ -306,11 +340,21 @@ const createStyles = (colors: Palette) =>
       width: '100%'
     },
     cardExpanded: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.08,
-      shadowRadius: 16,
-      elevation: 6
+      elevation: 6,
+      ...Platform.select({
+        web: {
+          boxShadow: '0 18px 36px rgba(0, 0, 0, 0.14)'
+        },
+        default: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.08,
+          shadowRadius: 16
+        }
+      })
+    },
+    cardDragging: {
+      opacity: 0.92
     },
     headerRow: {
       flexDirection: 'row',
@@ -331,6 +375,24 @@ const createStyles = (colors: Palette) =>
       gap: 8,
       flexWrap: 'wrap',
       justifyContent: 'flex-end'
+    },
+    dragHandle: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.mutedSurface
+    },
+    dragHandlePressed: {
+      backgroundColor: colors.border
+    },
+    dragHandleIcon: {
+      color: colors.textMuted,
+      fontSize: 16,
+      fontWeight: '700'
     },
     headerChip: {
       borderRadius: 14,
@@ -569,6 +631,28 @@ const createStyles = (colors: Palette) =>
       borderRadius: 14,
       paddingHorizontal: 12,
       paddingVertical: 8
+    },
+    subtaskItemActive: {
+      borderColor: colors.primary,
+      backgroundColor: colors.mutedSurface
+    },
+    subtaskDragHandle: {
+      width: 28,
+      height: 28,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface
+    },
+    subtaskDragHandlePressed: {
+      backgroundColor: colors.mutedSurface
+    },
+    subtaskGrip: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '700'
     },
     subtaskCheckbox: {
       width: 20,

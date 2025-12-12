@@ -1,10 +1,18 @@
 import { format } from 'date-fns';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { CalendarMark, Goal, Milestone, PlannerCategory, PlannerNote, PlannerSection, ScheduleEvent } from '@/types/planner';
+import type { FinanceSnapshot } from '@/types/finance';
 import type { EditableTaskFields, Task, TaskFilter } from '@/types/task';
 import { calculateGoalProgress, buildCalendarMatrix, createGoal, createScheduleEvent, createCalendarMark, createNote, groupAgendaByDate } from '@/utils/plannerUtils';
 import { createTask, filterTasks, getDefaultFilter, getTaskInsights, promoteTask, toggleStatus, updateTaskFields } from '@/utils/taskUtils';
-import { buildEmptySnapshot, loadPlannerSnapshot, normalizeSnapshot, persistPlannerSnapshot, type PlannerSnapshot } from '@/storage/plannerStorage';
+import {
+  buildEmptySnapshot,
+  loadPlannerSnapshot,
+  normalizeSnapshot,
+  persistPlannerSnapshot,
+  ensureFinanceSnapshot,
+  type PlannerSnapshot
+} from '@/storage/plannerStorage';
 import { clearSyncQueue, loadSyncQueue, replaceQueue, type SyncOperation } from '@/storage/syncQueue';
 import { defaultCategories } from '@/data/defaultCategories';
 import { fetchPlannerSnapshot, PlannerSyncConflict, syncPlannerOperations } from '@/services/plannerApi';
@@ -31,6 +39,7 @@ interface PlannerState {
   marks: CalendarMark[];
   notes: PlannerNote[];
   categories: PlannerCategory[];
+  finance: FinanceSnapshot;
   filter: TaskFilter;
   activeSection: PlannerSection;
   activeDate: string;
@@ -63,10 +72,24 @@ type Action =
   | { type: 'UPDATE_NOTE'; payload: PlannerNote }
   | { type: 'DELETE_NOTE'; payload: { id: PlannerNote['id'] } }
   | { type: 'ADD_CATEGORY'; payload: PlannerCategory }
-  | { type: 'DELETE_CATEGORY'; payload: { id: PlannerCategory['id'] } };
+  | { type: 'DELETE_CATEGORY'; payload: { id: PlannerCategory['id'] } }
+  | { type: 'REORDER_TASKS'; payload: { groupGoalId: string | null; orderedIds: string[] } }
+  | { type: 'REORDER_GOALS'; payload: { orderedIds: string[] } };
 
-const COLLECTION_KEYS = ['tasks', 'goals', 'events', 'marks', 'notes', 'categories'] as const;
-type CollectionKey = (typeof COLLECTION_KEYS)[number];
+const COLLECTION_DESCRIPTORS = [
+  { entityType: 'tasks', pick: (snapshot: PlannerSnapshot | null) => snapshot?.tasks ?? [] },
+  { entityType: 'goals', pick: (snapshot: PlannerSnapshot | null) => snapshot?.goals ?? [] },
+  { entityType: 'events', pick: (snapshot: PlannerSnapshot | null) => snapshot?.events ?? [] },
+  { entityType: 'marks', pick: (snapshot: PlannerSnapshot | null) => snapshot?.marks ?? [] },
+  { entityType: 'notes', pick: (snapshot: PlannerSnapshot | null) => snapshot?.notes ?? [] },
+  { entityType: 'categories', pick: (snapshot: PlannerSnapshot | null) => snapshot?.categories ?? [] },
+  { entityType: 'finance.wallets', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.wallets ?? [] },
+  { entityType: 'finance.transactions', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.transactions ?? [] },
+  { entityType: 'finance.budgets', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.budgets ?? [] },
+  { entityType: 'finance.goals', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.goals ?? [] },
+  { entityType: 'finance.recurring_rules', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.recurring_rules ?? [] },
+  { entityType: 'finance.categories', pick: (snapshot: PlannerSnapshot | null) => snapshot?.finance?.categories ?? [] }
+] as const;
 
 const entityIdOf = (entity: { id?: string | number } | undefined): string | null => {
   if (!entity || entity.id === undefined || entity.id === null) return null;
@@ -164,11 +187,11 @@ const buildDiffOperations = (previous: PlannerSnapshot | null, next: PlannerSnap
   const operations: SyncOperation[] = [];
   let counter = 0;
   const createTimestamp = () => new Date(Date.now() + counter++).toISOString();
-  COLLECTION_KEYS.forEach((key) => {
-    const prevCollection = previous[key as CollectionKey] as unknown as { id?: string | number }[];
-    const nextCollection = next[key as CollectionKey] as unknown as { id?: string | number }[];
+  COLLECTION_DESCRIPTORS.forEach(({ entityType, pick }) => {
+    const prevCollection = pick(previous) as { id?: string | number }[];
+    const nextCollection = pick(next) as { id?: string | number }[];
     operations.push(
-      ...diffCollection(prevCollection ?? [], nextCollection ?? [], key as SyncOperation['entityType'], baseVersion, createTimestamp)
+      ...diffCollection(prevCollection ?? [], nextCollection ?? [], entityType as SyncOperation['entityType'], baseVersion, createTimestamp)
     );
   });
   return operations;
@@ -182,8 +205,25 @@ const snapshotFromState = (state: PlannerState): PlannerSnapshot => ({
   events: state.events,
   marks: state.marks,
   notes: state.notes,
-  categories: state.categories
+  categories: state.categories,
+  finance: state.finance
 });
+
+const snapshotHasContent = (snapshot?: PlannerSnapshot | null): boolean => {
+  if (!snapshot) return false;
+  return Boolean(
+    snapshot.tasks?.length ||
+      snapshot.goals?.length ||
+      snapshot.events?.length ||
+      snapshot.marks?.length ||
+      snapshot.notes?.length ||
+      snapshot.finance?.transactions?.length ||
+      snapshot.finance?.wallets?.some((wallet) => (wallet.balance ?? 0) !== 0) ||
+      snapshot.finance?.budgets?.length ||
+      snapshot.finance?.goals?.length ||
+      snapshot.finance?.recurring_rules?.length
+  );
+};
 
 const initialState: PlannerState = {
   ready: false,
@@ -195,6 +235,7 @@ const initialState: PlannerState = {
   marks: [],
   notes: [],
   categories: defaultCategories,
+  finance: ensureFinanceSnapshot(),
   filter: getDefaultFilter(),
   activeSection: 'tasks',
   activeDate: format(new Date(), 'yyyy-MM-dd')
@@ -290,7 +331,8 @@ const reducer = (state: PlannerState, action: Action): PlannerState => {
         events: normalized.events,
         marks: normalized.marks,
         notes: normalized.notes,
-        categories: normalized.categories
+        categories: normalized.categories,
+        finance: ensureFinanceSnapshot(normalized.finance)
       };
     case 'SET_META':
       return { ...state, version: action.payload.version, updatedAt: action.payload.updatedAt };
@@ -378,6 +420,43 @@ const reducer = (state: PlannerState, action: Action): PlannerState => {
       );
       return { ...state, categories, tasks, goals: synchronizeGoalsWithTasks(goals, tasks) };
     }
+    case 'REORDER_TASKS': {
+      const normalizedGroupId = action.payload.groupGoalId ?? null;
+      const requestedIds = action.payload.orderedIds;
+      if (!requestedIds.length) return state;
+      const subsetMap = new Map<string, Task>();
+      state.tasks.forEach((task) => {
+        if ((task.goalId ?? null) === normalizedGroupId) {
+          subsetMap.set(task.id, task);
+        }
+      });
+      const orderedQueue = requestedIds.map((id) => subsetMap.get(id)).filter(Boolean) as Task[];
+      if (!orderedQueue.length) return state;
+      const orderedSet = new Set(requestedIds);
+      const queue = [...orderedQueue];
+      const tasks = state.tasks.map((task) => {
+        if ((task.goalId ?? null) !== normalizedGroupId) return task;
+        if (!orderedSet.has(task.id)) return task;
+        const next = queue.shift();
+        return next ?? task;
+      });
+      return { ...state, tasks, goals: synchronizeGoalsWithTasks(state.goals, tasks) };
+    }
+    case 'REORDER_GOALS': {
+      const requestedIds = action.payload.orderedIds;
+      if (!requestedIds.length) return state;
+      const goalMap = new Map(state.goals.map((goal) => [goal.id, goal] as const));
+      const orderedQueue = requestedIds.map((id) => goalMap.get(id)).filter(Boolean) as Goal[];
+      if (!orderedQueue.length) return state;
+      const orderedSet = new Set(requestedIds);
+      const queue = [...orderedQueue];
+      const goals = state.goals.map((goal) => {
+        if (!orderedSet.has(goal.id)) return goal;
+        const next = queue.shift();
+        return next ?? goal;
+      });
+      return { ...state, goals };
+    }
     default:
       return state;
   }
@@ -437,7 +516,7 @@ export const usePlannerStore = () => {
 
   const currentSnapshot = useMemo(
     () => snapshotFromState(state),
-    [state.version, state.updatedAt, state.tasks, state.goals, state.events, state.marks, state.notes, state.categories]
+    [state.version, state.updatedAt, state.tasks, state.goals, state.events, state.marks, state.notes, state.categories, state.finance]
   );
 
   useEffect(() => {
@@ -447,54 +526,39 @@ export const usePlannerStore = () => {
       if (!mounted) return;
       queueRef.current = storedQueue;
       setQueueRevision((revision) => revision + 1);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      let resolved: PlannerSnapshot | null = null;
-
-      if (token) {
-        try {
-          resolved = await fetchPlannerSnapshot(token);
-          if (resolved) {
-            await persistPlannerSnapshot(resolved);
-          }
-        } catch (error) {
-          console.warn('Não foi possível sincronizar snapshot remoto', error);
-        }
-      }
-
-      if (!resolved) {
-        const localSnapshot = await loadPlannerSnapshot();
-        resolved = localSnapshot ?? buildEmptySnapshot();
-      }
-
+      const localSnapshot = (await loadPlannerSnapshot()) ?? buildEmptySnapshot();
       if (!mounted) return;
+      applyHydration(localSnapshot);
+      const localHasContent = snapshotHasContent(localSnapshot);
+      const queueHasPending = queueRef.current.length > 0;
 
-      applyHydration(resolved);
+      if (!token) return;
+
+      try {
+        const remoteSnapshot = await fetchPlannerSnapshot(token);
+        if (!mounted || !remoteSnapshot) return;
+        const remoteHasContent = snapshotHasContent(remoteSnapshot);
+        const remoteVersion = remoteSnapshot.version ?? 0;
+        const localVersion = localSnapshot?.version ?? 0;
+        const remoteIsAhead = remoteVersion > localVersion;
+        const shouldOverride = remoteHasContent || !localHasContent || remoteIsAhead;
+        const canOverride = shouldOverride && (!queueHasPending || !localHasContent);
+        if (canOverride) {
+          await persistPlannerSnapshot(remoteSnapshot);
+          applyHydration(remoteSnapshot);
+        } else if (__DEV__) {
+          const reason = queueHasPending && localHasContent ? 'fila pendente' : 'snapshot remoto vazio';
+          console.info(`[Planner] Snapshot remoto não aplicado (${reason}); mantendo dados locais.`);
+        }
+      } catch (error) {
+        console.warn('Não foi possível sincronizar snapshot remoto', error);
+      }
     })();
     return () => {
       mounted = false;
     };
   }, [token, applyHydration]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const storedQueue = await loadSyncQueue();
-      if (!mounted) return;
-      queueRef.current = storedQueue;
-      setQueueRevision((revision) => revision + 1);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!state.ready) return;
@@ -608,10 +672,13 @@ export const usePlannerStore = () => {
   const deleteTask = (id: Task['id']) => dispatch({ type: 'DELETE_TASK', payload: { id } });
   const advanceTask = (id: Task['id']) => dispatch({ type: 'ADVANCE_TASK', payload: { id } });
   const toggleTask = (id: Task['id']) => dispatch({ type: 'TOGGLE_TASK', payload: { id } });
+  const reorderTasks = (groupGoalId: string | null, orderedIds: string[]) =>
+    dispatch({ type: 'REORDER_TASKS', payload: { groupGoalId, orderedIds } });
 
   const updateGoal = (goal: Goal) => dispatch({ type: 'UPDATE_GOAL', payload: goal });
   const addGoal = (payload: Parameters<typeof createGoal>[0]) => dispatch({ type: 'ADD_GOAL', payload: createGoal(payload) });
   const deleteGoal = (id: Goal['id']) => dispatch({ type: 'DELETE_GOAL', payload: { id } });
+  const reorderGoals = (orderedIds: string[]) => dispatch({ type: 'REORDER_GOALS', payload: { orderedIds } });
 
   const upsertMilestone = (goalId: Goal['id'], milestone: Milestone) => {
     const goal = state.goals.find((item) => item.id === goalId);
@@ -694,6 +761,7 @@ export const usePlannerStore = () => {
     marks: state.marks,
     notes: state.notes,
     categories: state.categories,
+    finance: state.finance,
     filteredTasks,
     filter: state.filter,
     calendarMatrix,
@@ -707,9 +775,11 @@ export const usePlannerStore = () => {
     deleteTask,
     advanceTask,
     toggleTask,
+    reorderTasks,
     addGoal,
     updateGoal,
     deleteGoal,
+    reorderGoals,
     upsertMilestone,
     addEvent,
     updateEvent,

@@ -18,6 +18,8 @@ interface Props {
   notes?: PlannerNote[];
   onEdit?(goal: Goal): void;
   onDelete?(goal: Goal): void;
+  onDragStart?(): void;
+  isDragging?: boolean;
 }
 
 const statusLabel: Record<Task['status'], string> = {
@@ -26,7 +28,7 @@ const statusLabel: Record<Task['status'], string> = {
   done: 'concluída'
 };
 
-export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, onDelete }: Props) => {
+export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, onDelete, onDragStart, isDragging }: Props) => {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
@@ -104,7 +106,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
           </View>
         ))
       ) : (
-        <Text style={styles.taskPlaceholder}>Adicione tarefas para acompanhar o avanço deste objetivo.</Text>
+        <Text style={styles.taskPlaceholder}>Adicione tarefas para acompanhar o avanço desta meta.</Text>
       )
     },
     {
@@ -147,11 +149,11 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
   ];
 
   return (
-    <View style={[styles.card, expanded && styles.cardExpanded, { borderColor: goal.color }]}>
+    <View style={[styles.card, expanded && styles.cardExpanded, isDragging && styles.cardDragging, { borderColor: goal.color }]}>
       <View style={styles.goalHeaderRow}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={expanded ? 'Recolher objetivo' : 'Expandir objetivo'}
+          accessibilityLabel={expanded ? 'Recolher meta' : 'Expandir meta'}
           style={({ pressed }) => [styles.goalHeaderContent, pressed && styles.goalHeaderContentPressed]}
           onPress={handleToggleExpansion}
         >
@@ -167,6 +169,16 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
           {expanded && goal.description ? <Text style={styles.description}>{goal.description}</Text> : null}
         </Pressable>
         <View style={styles.goalHeaderControls}>
+          {onDragStart ? (
+            <Pressable
+              style={({ pressed }) => [styles.dragHandle, pressed && styles.dragHandlePressed]}
+              onPressIn={onDragStart}
+              onLongPress={onDragStart}
+              hitSlop={6}
+            >
+              <Text style={styles.dragHandleIcon}>::</Text>
+            </Pressable>
+          ) : null}
           {onEdit ? (
             <Pressable style={styles.goalHeaderChip} onPress={() => onEdit(goal)}>
               <Text style={styles.goalHeaderChipLabel}>Editar</Text>
@@ -218,7 +230,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
               <Text style={styles.detailChipValue}>{priorityLabel}</Text>
             </View>
             <View style={styles.detailChip}>
-              <Text style={styles.detailChipLabel}>Objetivo</Text>
+              <Text style={styles.detailChipLabel}>Meta</Text>
               <Text style={styles.detailChipValue}>{goal.category}</Text>
             </View>
           </View>
@@ -279,7 +291,7 @@ export const GoalCard = ({ goal, tasks = [], events = [], notes = [], onEdit, on
               <Text style={styles.collapsedChipValue}>{dueLabel ?? '—'}</Text>
             </View>
             <View style={[styles.collapsedChip, styles.collapsedGoalChip]}>
-              <Text style={styles.collapsedChipLabel}>Objetivo</Text>
+              <Text style={styles.collapsedChipLabel}>Meta</Text>
               <Text style={styles.collapsedChipValue} numberOfLines={1}>
                 {goal.category}
               </Text>
@@ -302,11 +314,21 @@ const createStyles = (colors: Palette) =>
       gap: 12
     },
     cardExpanded: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.08,
-      shadowRadius: 18,
-      elevation: 8
+      elevation: 8,
+      ...Platform.select({
+        web: {
+          boxShadow: '0 22px 40px rgba(0, 0, 0, 0.14)'
+        },
+        default: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 10 },
+          shadowOpacity: 0.08,
+          shadowRadius: 18
+        }
+      })
+    },
+    cardDragging: {
+      opacity: 0.9
     },
     goalHeaderRow: {
       flexDirection: 'row',
@@ -333,6 +355,24 @@ const createStyles = (colors: Palette) =>
       gap: 8,
       flexWrap: 'wrap',
       justifyContent: 'flex-end'
+    },
+    dragHandle: {
+      width: 40,
+      height: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.mutedSurface
+    },
+    dragHandlePressed: {
+      backgroundColor: colors.border
+    },
+    dragHandleIcon: {
+      color: colors.textMuted,
+      fontSize: 16,
+      fontWeight: '700'
     },
     toggleButton: {
       width: 42,

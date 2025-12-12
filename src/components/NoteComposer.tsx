@@ -141,13 +141,13 @@ export const NoteComposer = ({ visible, onClose, onSubmit, initialNote, goals }:
             />
             {goals.length ? (
               <View>
-                <Text style={styles.sectionLabel}>Objetivo relacionado</Text>
+                <Text style={styles.sectionLabel}>Meta relacionada</Text>
                 <View style={styles.goalRow}>
                   <Pressable
                     style={[styles.goalChip, form.goalId === null && styles.goalChipActive]}
                     onPress={() => setField('goalId', null)}
                   >
-                    <Text style={styles.goalChipLabel}>Sem objetivo</Text>
+                    <Text style={styles.goalChipLabel}>Sem meta</Text>
                   </Pressable>
                   {goals.map((goal) => (
                     <Pressable

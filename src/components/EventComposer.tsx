@@ -195,13 +195,13 @@ export const EventComposer = ({ visible, onClose, onSubmit, defaultKind, default
             />
             {goals.length ? (
               <View>
-                <Text style={styles.label}>Objetivo vinculado</Text>
+                <Text style={styles.label}>Meta vinculada</Text>
                 <View style={styles.goalRow}>
                   <Pressable
                     style={[styles.goalChip, form.linkedGoalId === null && styles.goalChipActive]}
                     onPress={() => setField('linkedGoalId', null)}
                   >
-                    <Text style={styles.goalChipLabel}>Sem objetivo</Text>
+                    <Text style={styles.goalChipLabel}>Sem meta</Text>
                   </Pressable>
                   {goals.map((goal) => (
                     <Pressable

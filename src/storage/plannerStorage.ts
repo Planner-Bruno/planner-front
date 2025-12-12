@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { defaultCategories } from '@/data/defaultCategories';
 import type { CalendarMark, Goal, PlannerCategory, PlannerNote, ScheduleEvent } from '@/types/planner';
+import type { FinanceSnapshot } from '@/types/finance';
+import { createEmptyFinanceSnapshot } from '@/types/finance';
 import type { Task } from '@/types/task';
 
 const STORAGE_KEY = 'planner.superapp@v1';
@@ -14,9 +16,23 @@ export interface PlannerSnapshot {
   marks: CalendarMark[];
   notes: PlannerNote[];
   categories: PlannerCategory[];
+  finance: FinanceSnapshot;
 }
 
 const cloneCategories = (): PlannerCategory[] => defaultCategories.map((category) => ({ ...category }));
+
+export const ensureFinanceSnapshot = (snapshot?: FinanceSnapshot | null): FinanceSnapshot => {
+  const base = createEmptyFinanceSnapshot();
+  if (!snapshot) return base;
+  return {
+    wallets: Array.isArray(snapshot.wallets) ? snapshot.wallets : base.wallets,
+    categories: Array.isArray(snapshot.categories) ? snapshot.categories : base.categories,
+    transactions: Array.isArray(snapshot.transactions) ? snapshot.transactions : base.transactions,
+    budgets: Array.isArray(snapshot.budgets) ? snapshot.budgets : base.budgets,
+    goals: Array.isArray(snapshot.goals) ? snapshot.goals : base.goals,
+    recurring_rules: Array.isArray(snapshot.recurring_rules) ? snapshot.recurring_rules : base.recurring_rules
+  };
+};
 
 export const buildEmptySnapshot = (): PlannerSnapshot => ({
   version: 0,
@@ -26,7 +42,8 @@ export const buildEmptySnapshot = (): PlannerSnapshot => ({
   events: [],
   marks: [],
   notes: [],
-  categories: cloneCategories()
+  categories: cloneCategories(),
+  finance: ensureFinanceSnapshot(createEmptyFinanceSnapshot())
 });
 
 export const normalizeSnapshot = (snapshot?: PlannerSnapshot | null): PlannerSnapshot => {
@@ -43,7 +60,8 @@ export const normalizeSnapshot = (snapshot?: PlannerSnapshot | null): PlannerSna
     events: snapshot?.events ?? [],
     marks: snapshot?.marks ?? [],
     notes: snapshot?.notes ?? [],
-    categories: snapshot?.categories?.length ? snapshot.categories : cloneCategories()
+    categories: snapshot?.categories?.length ? snapshot.categories : cloneCategories(),
+    finance: ensureFinanceSnapshot(snapshot?.finance)
   };
 };
 

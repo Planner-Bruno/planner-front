@@ -339,13 +339,13 @@ export const TaskComposer = ({
 
             {goals.length ? (
               <View>
-                <Text style={styles.label}>Objetivo relacionado</Text>
+                <Text style={styles.label}>Meta relacionada</Text>
                 <View style={styles.goalRow}>
                   <Pressable
                     style={[styles.goalChip, form.goalId === null && styles.goalChipActive]}
                     onPress={() => setForm((prev) => ({ ...prev, goalId: null }))}
                   >
-                    <Text style={styles.goalChipLabel}>Sem objetivo</Text>
+                    <Text style={styles.goalChipLabel}>Sem meta</Text>
                   </Pressable>
                   {goals.map((goal) => (
                     <Pressable
