@@ -15,7 +15,7 @@ import {
 } from '@/storage/plannerStorage';
 import { clearSyncQueue, loadSyncQueue, replaceQueue, type SyncOperation } from '@/storage/syncQueue';
 import { defaultCategories } from '@/data/defaultCategories';
-import { fetchPlannerSnapshot, PlannerSyncConflict, syncPlannerOperations } from '@/services/plannerApi';
+import { fetchPlannerSnapshot, persistPlannerSnapshotRemote, PlannerSyncConflict, syncPlannerOperations } from '@/services/plannerApi';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useAuth } from '@/state/AuthContext';
 
@@ -222,6 +222,21 @@ const snapshotHasContent = (snapshot?: PlannerSnapshot | null): boolean => {
       snapshot.finance?.budgets?.length ||
       snapshot.finance?.goals?.length ||
       snapshot.finance?.recurring_rules?.length
+  );
+};
+
+const snapshotSeemsEmptyComparedTo = (server: PlannerSnapshot, local: PlannerSnapshot): boolean => {
+  const localHas = snapshotHasContent(local);
+  const serverHas = snapshotHasContent(server);
+  if (!localHas) return false;
+  if (!serverHas) return true;
+  return Boolean(
+    (local.goals?.length ?? 0) > 0 && (server.goals?.length ?? 0) === 0 ||
+      (local.categories?.length ?? 0) > 0 && (server.categories?.length ?? 0) === 0 ||
+      (local.events?.length ?? 0) > 0 && (server.events?.length ?? 0) === 0 ||
+      (local.marks?.length ?? 0) > 0 && (server.marks?.length ?? 0) === 0 ||
+      (local.notes?.length ?? 0) > 0 && (server.notes?.length ?? 0) === 0 ||
+      (local.finance?.transactions?.length ?? 0) > 0 && (server.finance?.transactions?.length ?? 0) === 0
   );
 };
 
@@ -547,6 +562,21 @@ export const usePlannerStore = () => {
         if (canOverride) {
           await persistPlannerSnapshot(remoteSnapshot);
           applyHydration(remoteSnapshot);
+        } else if (!remoteHasContent && localHasContent) {
+          // Server is empty but local has data (common after importing a backup).
+          // Seed the server with the full local snapshot to prevent later sync from wiping local state.
+          try {
+            const seeded = await persistPlannerSnapshotRemote(token, localSnapshot, { includeVersion: false });
+            if (seeded && mounted) {
+              await persistPlannerSnapshot(seeded);
+              await clearSyncQueue();
+              queueRef.current = [];
+              setQueueRevision((revision) => revision + 1);
+              applyHydration(seeded);
+            }
+          } catch (seedError) {
+            console.warn('Não foi possível enviar snapshot local para o servidor', seedError);
+          }
         } else if (__DEV__) {
           const reason = queueHasPending && localHasContent ? 'fila pendente' : 'snapshot remoto vazio';
           console.info(`[Planner] Snapshot remoto não aplicado (${reason}); mantendo dados locais.`);
@@ -603,11 +633,51 @@ export const usePlannerStore = () => {
       } else {
         setLastSyncError(null);
       }
+      // If the server snapshot looks incomplete compared to local, seed the server with the full local snapshot
+      // before applying anything locally, to avoid wiping non-task collections.
+      if (snapshotSeemsEmptyComparedTo(result.snapshot, currentSnapshot)) {
+        const seeded = await persistPlannerSnapshotRemote(token, currentSnapshot, { includeVersion: false });
+        if (seeded) {
+          await persistPlannerSnapshot(seeded);
+          await clearSyncQueue();
+          queueRef.current = [];
+          setQueueRevision((revision) => revision + 1);
+          applyHydration(seeded);
+          setLastSyncAt(new Date().toISOString());
+          setLastSyncError(null);
+          return;
+        }
+      }
+
       await persistPlannerSnapshot(result.snapshot);
       applyHydration(result.snapshot);
       setLastSyncAt(new Date().toISOString());
     } catch (error) {
       if (error instanceof PlannerSyncConflict) {
+        // If the conflict comes from a missing/empty server snapshot (e.g. server has no record yet),
+        // prefer preserving local data and try seeding the server with the full local snapshot.
+        if (snapshotSeemsEmptyComparedTo(error.serverSnapshot, currentSnapshot)) {
+          try {
+            const seeded = await persistPlannerSnapshotRemote(token, currentSnapshot, { includeVersion: false });
+            if (seeded) {
+              await persistPlannerSnapshot(seeded);
+              await clearSyncQueue();
+              queueRef.current = [];
+              setQueueRevision((revision) => revision + 1);
+              applyHydration(seeded);
+              setLastSyncAt(new Date().toISOString());
+              setLastSyncError(null);
+              return;
+            }
+          } catch (seedError) {
+            console.warn('Conflito ao sincronizar e falha ao enviar snapshot local', seedError);
+            setLastSyncError('Não foi possível sincronizar com o servidor. Seus dados locais foram mantidos.');
+            return;
+          }
+          setLastSyncError('Não foi possível sincronizar com o servidor. Seus dados locais foram mantidos.');
+          return;
+        }
+
         await persistPlannerSnapshot(error.serverSnapshot);
         await clearSyncQueue();
         queueRef.current = [];
@@ -701,7 +771,28 @@ export const usePlannerStore = () => {
   const addNote = (payload: Parameters<typeof createNote>[0]) => dispatch({ type: 'ADD_NOTE', payload: createNote(payload) });
   const updateNote = (note: PlannerNote) => dispatch({ type: 'UPDATE_NOTE', payload: { ...note, updatedAt: new Date().toISOString() } });
   const deleteNote = (id: PlannerNote['id']) => dispatch({ type: 'DELETE_NOTE', payload: { id } });
-  const hydrateSnapshot = (snapshot: PlannerSnapshot) => applyHydration(snapshot);
+  const hydrateSnapshot = async (snapshot: PlannerSnapshot) => {
+    const normalized = normalizeSnapshot(snapshot);
+    applyHydration(normalized);
+
+    // Restores should reset the queue; otherwise we may replay stale operations onto the imported state.
+    await clearSyncQueue();
+    queueRef.current = [];
+    setQueueRevision((revision) => revision + 1);
+
+    // If authenticated+online, seed the server so that the next edit doesn't conflict and overwrite local data.
+    if (token && isOnline) {
+      try {
+        const seeded = await persistPlannerSnapshotRemote(token, normalized, { includeVersion: false });
+        if (seeded) {
+          await persistPlannerSnapshot(seeded);
+          applyHydration(seeded);
+        }
+      } catch (error) {
+        console.warn('Backup importado localmente, mas não foi possível enviar ao servidor', error);
+      }
+    }
+  };
 
   const addCategory = (name: string, color: string): boolean => {
     const trimmedName = name.trim();

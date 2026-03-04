@@ -26,10 +26,11 @@ import { TaskCard } from '@/components/TaskCard';
 import { TaskComposer } from '@/components/TaskComposer';
 import { InsightsPanel } from '@/components/InsightsPanel';
 import { FinancePanel } from '@/components/FinancePanel';
+import { SettingsModal } from '@/components/SettingsModal';
 import { usePlannerStore } from '@/state/usePlannerStore';
 import { useInsights } from '@/state/useInsights';
 import { useAuth } from '@/state/AuthContext';
-import type { Palette } from '@/theme/colors';
+import type { Palette, ThemeMode } from '@/theme/colors';
 import { useColors, useThemeMode } from '@/theme/ThemeProvider';
 import { ensureFinanceSnapshot, type PlannerSnapshot } from '@/storage/plannerStorage';
 import { extractDayKey } from '@/utils/plannerUtils';
@@ -209,7 +210,7 @@ type EventFormPayload = {
 
 export const HomeScreen = () => {
   const colors = useColors();
-  const { mode, toggleTheme } = useThemeMode();
+  const { mode } = useThemeMode();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isWide = width >= 960;
@@ -266,7 +267,7 @@ export const HomeScreen = () => {
     syncStatus,
     syncNow
   } = usePlannerStore();
-  const { user, logout } = useAuth();
+  const { user, logout, updatePreferences } = useAuth();
   const { data: insightsOverview, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights();
 
   const goalsById = useMemo(
@@ -345,6 +346,9 @@ export const HomeScreen = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [savingPreference, setSavingPreference] = useState(false);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
 
   const heading = useMemo(() => {
     const hours = new Date().getHours();
@@ -399,6 +403,35 @@ export const HomeScreen = () => {
     },
     [reorderTasks]
   );
+
+  const handleThemePreferenceChange = useCallback(
+    async (nextMode: ThemeMode) => {
+      if (nextMode === mode) {
+        return;
+      }
+      setPreferenceError(null);
+      setSavingPreference(true);
+      try {
+        await updatePreferences({ themeMode: nextMode });
+      } catch (prefError) {
+        const message = prefError instanceof Error ? prefError.message : 'Não foi possível atualizar as preferências.';
+        setPreferenceError(message);
+      } finally {
+        setSavingPreference(false);
+      }
+    },
+    [mode, updatePreferences]
+  );
+
+  const handleOpenSettings = useCallback(() => {
+    setPreferenceError(null);
+    setSettingsVisible(true);
+  }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setPreferenceError(null);
+    setSettingsVisible(false);
+  }, []);
 
   const handleReorderGoals = useCallback(
     (orderedIds: string[]) => {
@@ -525,7 +558,7 @@ export const HomeScreen = () => {
       const contents = await readSnapshotFile(asset);
       const parsed = JSON.parse(contents) as Partial<PlannerSnapshot>;
       if (!isValidSnapshot(parsed)) throw new Error('Formato de backup não reconhecido.');
-      hydrateSnapshot({
+      await hydrateSnapshot({
         ...parsed,
         finance: ensureFinanceSnapshot(parsed.finance)
       });
@@ -1017,11 +1050,12 @@ export const HomeScreen = () => {
 
     return (
       <View style={containerStyle}>
-        <Pressable style={baseButton} onPress={toggleTheme}>
-          <Text style={styles.themeLabel}>{mode === 'dark' ? 'Modo claro' : 'Modo escuro'}</Text>
-        </Pressable>
-        <Pressable style={[baseButton, styles.logoutChip]} onPress={logout}>
-          <Text style={[styles.themeLabel, styles.logoutLabel]}>Sair</Text>
+        <Pressable
+          style={[baseButton, primaryButton, isExporting && disabledStyle]}
+          onPress={handleExportBackup}
+          disabled={isExporting}
+        >
+          <Text style={[styles.themeLabel, styles.primaryChipLabel]}>{isExporting ? 'Salvando...' : 'Salvar'}</Text>
         </Pressable>
         <Pressable
           style={[baseButton, secondaryButton, isImporting && disabledStyle]}
@@ -1030,12 +1064,11 @@ export const HomeScreen = () => {
         >
           <Text style={styles.themeLabel}>{isImporting ? 'Importando...' : 'Importar'}</Text>
         </Pressable>
-        <Pressable
-          style={[baseButton, primaryButton, isExporting && disabledStyle]}
-          onPress={handleExportBackup}
-          disabled={isExporting}
-        >
-          <Text style={[styles.themeLabel, styles.primaryChipLabel]}>{isExporting ? 'Salvando...' : 'Salvar'}</Text>
+        <Pressable style={[baseButton, styles.settingsChip]} onPress={handleOpenSettings}>
+          <Text style={styles.themeLabel}>Configurações</Text>
+        </Pressable>
+        <Pressable style={[baseButton, styles.logoutChip]} onPress={logout}>
+          <Text style={[styles.themeLabel, styles.logoutLabel]}>Sair</Text>
         </Pressable>
       </View>
     );
@@ -1121,6 +1154,16 @@ export const HomeScreen = () => {
           setEditingMark(null);
         }}
         onSubmit={handleMarkSubmit}
+      />
+      <SettingsModal
+        visible={settingsVisible}
+        onClose={handleCloseSettings}
+        userName={user?.name}
+        userEmail={user?.email}
+        themeMode={mode}
+        onSelectTheme={handleThemePreferenceChange}
+        savingPreference={savingPreference}
+        preferenceError={preferenceError}
       />
     </>
   );
@@ -1323,6 +1366,9 @@ const createStyles = (colors: Palette) =>
     themeLabel: {
       color: colors.text,
       fontWeight: '600'
+    },
+    settingsChip: {
+      backgroundColor: colors.surface
     },
     primaryChipLabel: {
       color: colors.background

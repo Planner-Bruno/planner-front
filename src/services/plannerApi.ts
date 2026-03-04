@@ -52,11 +52,35 @@ export const fetchPlannerSnapshot = async (token: string): Promise<PlannerSnapsh
   return normalizeSnapshot(data);
 };
 
-export const persistPlannerSnapshotRemote = async (token: string, snapshot: PlannerSnapshot): Promise<PlannerSnapshot | null> => {
+type PersistRemoteOptions = {
+  /**
+   * When false, omits the version field to allow seeding/overwriting when the
+   * local snapshot version doesn't match the server yet (e.g., after import).
+   */
+  includeVersion?: boolean;
+};
+
+const buildSnapshotUpdatePayload = (snapshot: PlannerSnapshot, includeVersion: boolean) => ({
+  ...(includeVersion ? { version: snapshot.version } : {}),
+  tasks: snapshot.tasks ?? [],
+  goals: snapshot.goals ?? [],
+  events: snapshot.events ?? [],
+  marks: snapshot.marks ?? [],
+  notes: snapshot.notes ?? [],
+  categories: snapshot.categories ?? [],
+  finance: snapshot.finance ?? ({} as PlannerSnapshot['finance'])
+});
+
+export const persistPlannerSnapshotRemote = async (
+  token: string,
+  snapshot: PlannerSnapshot,
+  options: PersistRemoteOptions = {}
+): Promise<PlannerSnapshot | null> => {
+  const includeVersion = options.includeVersion ?? true;
   const response = await fetch(plannerEndpoint, {
     method: 'PUT',
     headers: authHeaders(token),
-    body: JSON.stringify(snapshot)
+    body: JSON.stringify(buildSnapshotUpdatePayload(snapshot, includeVersion))
   });
 
   if (response.status === 409) {

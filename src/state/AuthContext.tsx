@@ -3,11 +3,41 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { AUTH_STORAGE_KEY, API_BASE_URL } from '@/config/api';
 import { resetPlannerSnapshot } from '@/storage/plannerStorage';
 import { clearSyncQueue } from '@/storage/syncQueue';
+import { useThemeMode } from '@/theme/ThemeProvider';
+import type { ThemeMode } from '@/theme/colors';
+
+interface UserPreferences {
+  themeMode?: ThemeMode;
+}
 
 interface UserProfile {
   email: string;
   name?: string;
+  preferences?: UserPreferences;
 }
+
+type RawUserPreferences = {
+  theme_mode?: ThemeMode | null;
+} | null;
+
+type RawUserPayload = {
+  email: string;
+  name?: string | null;
+  preferences?: RawUserPreferences;
+};
+
+const isThemeMode = (value: unknown): value is ThemeMode => value === 'light' || value === 'dark';
+
+const normalizePreferences = (raw?: RawUserPreferences): UserPreferences => {
+  const themeMode = raw?.theme_mode;
+  return isThemeMode(themeMode) ? { themeMode } : {};
+};
+
+const normalizeUserProfile = (payload: RawUserPayload): UserProfile => ({
+  email: payload.email,
+  name: payload.name ?? undefined,
+  preferences: normalizePreferences(payload.preferences)
+});
 
 interface AuthContextValue {
   bootstrapping: boolean;
@@ -18,6 +48,7 @@ interface AuthContextValue {
   login(email: string, password: string): Promise<void>;
   register(email: string, password: string, name?: string): Promise<void>;
   logout(): Promise<void>;
+  updatePreferences(preferences: Partial<UserPreferences>): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -28,6 +59,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { setMode } = useThemeMode();
+
+  const applyUserTheme = useCallback(
+    (preferences?: UserPreferences) => {
+      if (!preferences) return;
+      const preferred = preferences.themeMode;
+      if (isThemeMode(preferred)) {
+        setMode(preferred);
+      }
+    },
+    [setMode]
+  );
+
+  const persistAuthPayload = useCallback(async (tokenValue: string, userValue: UserProfile) => {
+    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: tokenValue, user: userValue }));
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -37,6 +84,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const parsed = JSON.parse(stored) as { token: string; user: UserProfile };
           setToken(parsed.token);
           setUser(parsed.user);
+          applyUserTheme(parsed.user?.preferences);
         }
       } catch (storageError) {
         console.warn('Erro ao carregar auth', storageError);
@@ -44,7 +92,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setBootstrapping(false);
       }
     })();
-  }, []);
+  }, [applyUserTheme]);
 
   const authenticate = useCallback(async (path: '/auth/login' | '/auth/register', payload: Record<string, unknown>) => {
     setLoading(true);
@@ -59,9 +107,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!response.ok) {
         throw new Error(data?.detail ?? 'Não foi possível concluir a solicitação');
       }
+      const normalizedUser = normalizeUserProfile(data.user as RawUserPayload);
       setToken(data.token);
-      setUser(data.user);
-      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: data.token, user: data.user }));
+      setUser(normalizedUser);
+      applyUserTheme(normalizedUser.preferences);
+      await persistAuthPayload(data.token, normalizedUser);
     } catch (requestError) {
       const normalizedError = (() => {
         if (requestError instanceof TypeError && requestError.message === 'Network request failed') {
@@ -93,6 +143,41 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     await Promise.all([resetPlannerSnapshot(), clearSyncQueue()]);
   }, []);
 
+  const updatePreferences = useCallback(
+    async (preferences: Partial<UserPreferences>) => {
+      if (!token) {
+        throw new Error('É necessário estar autenticado para atualizar preferências.');
+      }
+      const payload: Record<string, unknown> = {};
+      if (preferences.themeMode && isThemeMode(preferences.themeMode)) {
+        payload.theme_mode = preferences.themeMode;
+      }
+      if (!Object.keys(payload).length) {
+        return;
+      }
+      const response = await fetch(`${API_BASE_URL}/auth/preferences`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail ?? 'Não foi possível atualizar as preferências.');
+      }
+      const normalized = normalizePreferences(data?.preferences as RawUserPreferences);
+      const nextUser = user ? { ...user, preferences: { ...user.preferences, ...normalized } } : null;
+      if (nextUser) {
+        setUser(nextUser);
+        applyUserTheme(nextUser.preferences);
+        await persistAuthPayload(token, nextUser);
+      }
+    },
+    [applyUserTheme, persistAuthPayload, token, user]
+  );
+
   const value: AuthContextValue = {
     bootstrapping,
     token,
@@ -101,7 +186,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     loading,
     login,
     register,
-    logout
+    logout,
+    updatePreferences
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
