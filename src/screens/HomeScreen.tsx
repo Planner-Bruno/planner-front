@@ -1164,6 +1164,7 @@ export const HomeScreen = () => {
         onSelectTheme={handleThemePreferenceChange}
         savingPreference={savingPreference}
         preferenceError={preferenceError}
+        onLogout={logout}
       />
     </>
   );

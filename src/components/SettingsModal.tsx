@@ -12,6 +12,7 @@ interface SettingsModalProps {
   onSelectTheme(mode: ThemeMode): void;
   savingPreference?: boolean;
   preferenceError?: string | null;
+  onLogout?(): Promise<void> | void;
 }
 
 type SettingsTab = 'profile' | 'preferences';
@@ -29,11 +30,24 @@ export const SettingsModal = ({
   themeMode,
   onSelectTheme,
   savingPreference = false,
-  preferenceError = null
+  preferenceError = null,
+  onLogout
 }: SettingsModalProps) => {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [tab, setTab] = useState<SettingsTab>('profile');
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (!onLogout) return;
+    setLoggingOut(true);
+    try {
+      await onLogout();
+      onClose();
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   useEffect(() => {
     if (visible) {
@@ -52,6 +66,15 @@ export const SettingsModal = ({
         <Text style={styles.infoLabel}>E-mail</Text>
         <Text style={styles.infoValue}>{userEmail || '—'}</Text>
       </View>
+      {onLogout && (
+        <Pressable
+          style={[styles.logoutButton, loggingOut && styles.logoutButtonDisabled]}
+          onPress={handleLogout}
+          disabled={loggingOut}
+        >
+          <Text style={styles.logoutButtonLabel}>{loggingOut ? 'Saindo...' : 'Deslogar'}</Text>
+        </Pressable>
+      )}
     </View>
   );
 
@@ -241,5 +264,22 @@ const createStyles = (colors: Palette) =>
     errorText: {
       color: colors.danger,
       fontSize: 12
+    },
+    logoutButton: {
+      marginTop: 12,
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+      backgroundColor: colors.danger,
+      borderWidth: 1,
+      borderColor: colors.danger
+    },
+    logoutButtonDisabled: {
+      opacity: 0.6
+    },
+    logoutButtonLabel: {
+      color: colors.background,
+      fontWeight: '600',
+      fontSize: 14
     }
   });
